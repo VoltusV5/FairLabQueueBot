@@ -12,12 +12,18 @@ erDiagram
     USER ||--o{ SUBMISSION_ATTEMPT : makes
     SUBJECT ||--o{ QUEUE : has
     SUBJECT ||--o{ SUBMISSION_ATTEMPT : related_to
+    USER ||--o{ USERGENERAL : has
+    USERGENERAL ||--o{PAY 
 
     USER {
         int id
         string username
         string first_name
         string last_name
+    }
+    USERGENERAL {
+        int id
+        int user_id
     }
     QUEUE {
         int id
@@ -43,6 +49,13 @@ erDiagram
     SUBJECT {
         int id
         string name
+    }
+    PAY {
+        int id
+        int user_id
+        bool status
+        datetime data_pay
+        datetime date_end
     }
 
 ```
