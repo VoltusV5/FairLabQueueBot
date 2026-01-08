@@ -1,6 +1,6 @@
 """Создание/инициализация БД."""
 from sqlalchemy import create_engine, Integer, String, Column, ForeignKey, DateTime,JSON, Boolean
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session
+from sqlalchemy.orm import DeclarativeBase, Mapped, sessionmaker, Session
 from datetime import datetime
 
 SQL_URL = "sqlite:///./app.db"
@@ -18,6 +18,7 @@ class Subject(Base):
     __tablename__= "subject"
 
     id: Mapped[int] = Column(Integer, primary_key=True, index=True)
+    chat_id: Mapped[int] = Column(Integer)
     name: Mapped[str] = Column(String)
 
 
@@ -42,6 +43,9 @@ class User(Base):
     id: Mapped[int] = Column(Integer, primary_key=True)
     real_name: Mapped[str] = Column(String, unique=True)
     is_admin: Mapped[bool] = Column(Boolean)
+    chat_id: Mapped[int] = Column (Integer)
+
+ 
 
 
 class SubmissionAttempt(Base):
@@ -65,4 +69,6 @@ class Pay(Base):
     date_pay: Mapped[datetime] = Column(DateTime)
     date_end: Mapped[datetime] = Column(DateTime)
 
-Base.metadata.create_all(engine)
+
+SessionLocal = sessionmaker(autoflush=False,bind=engine)
+
