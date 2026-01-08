@@ -13,7 +13,7 @@ erDiagram
     SUBJECT ||--o{ QUEUE : has
     SUBJECT ||--o{ SUBMISSION_ATTEMPT : related_to
     USER ||--o{ USERGENERAL : has
-    USERGENERAL ||--o{PAY 
+    USERGENERAL ||--o{ PAY : has
 
     USER {
         int id
