@@ -12,13 +12,15 @@ engine = create_engine(
 
 class Base(DeclarativeBase): pass
 
+
 class Subject(Base):
     """Таблица названий списков"""
     __tablename__= "subject"
 
     id: Mapped[int] = Column(Integer, primary_key=True, index=True)
     name: Mapped[str] = Column(String)
-    
+
+
 class Queue(Base):
     """Очередь"""
     __tablename__="queue"
@@ -33,29 +35,13 @@ class Queue(Base):
     status:Mapped[str] = Column(String)
 
 
-
 class User(Base):
     """Таблица пользователей"""
     __tablename__="users"
 
     id: Mapped[int] = Column(Integer, primary_key=True)
-    name_tg: Mapped[str] = Column(String, unique=True)
-
-class UserGeneral(Base):
-    """Таблица люде, которые запускают голосование"""
-    __tablename__ = "usergeneral"
-
-    id: Mapped[int] = Column(Integer, primary_key=True)
-    user_id: Mapped[str] = Column(ForeignKey("users.id"))
-
-class QueueEntry(Base):
-    """Таблица записи в очередь"""
-    __tablename__="queue_entry"
-
-    id: Mapped[int] = Column(Integer, primary_key=True)
-    queue_id: Mapped[int] = Column(ForeignKey("queue.id"))
-    user_id:Mapped[int] = Column(ForeignKey("users.id"))
-    position: Mapped[int] = Column(Integer)
+    real_name: Mapped[str] = Column(String, unique=True)
+    is_admin: Mapped[bool] = Column(Boolean)
 
 
 class SubmissionAttempt(Base):
