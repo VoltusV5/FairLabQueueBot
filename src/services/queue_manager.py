@@ -47,11 +47,13 @@ async def get_queue(ms: Message, command: CommandObject):
         spisok = ""
         for i in range(len(queue)):
             spisok += f'{i+1}. {queue[i][1].name_tg}\n'
+        k=0
         await ms.answer(spisok) 
         
     else:
         spisok = ""
         for i in range(len(queue)):
             spisok += f'{i+1}. {queue[i][1].name_tg}\n'
+        k=0
         await ms.answer(spisok) 
 
