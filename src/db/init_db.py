@@ -71,6 +71,7 @@ class SubmissionAttempt(Base):
 
 class Pay(Base):
     """Таблица для отслеживания подписки"""
+    __tablename__="pay"
 
     id: Mapped[int] = Column(Integer, primary_key=True)
     user_id:Mapped[int] = Column(ForeignKey("usergeneral.id"))
