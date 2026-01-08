@@ -7,56 +7,43 @@
 
 ```mermaid
 erDiagram
-    USER ||--o{ QUEUE_ENTRY : participates
-    QUEUE ||--o{ QUEUE_ENTRY : contains
-    USER ||--o{ SUBMISSION_ATTEMPT : makes
-    SUBJECT ||--o{ QUEUE : has
-    SUBJECT ||--o{ SUBMISSION_ATTEMPT : related_to
-    USER ||--o{ USERGENERAL : has
-    USERGENERAL ||--o{ PAY : has
+    USER ||--o{ QUEUE : участвует
+    QUEUE ||--o{ SUBMISSION_ATTEMPT : связан
+    SUBJECT ||--o{ QUEUE : имеет
+    SUBJECT ||--o{ SUBMISSION_ATTEMPT : связан
+    USER ||--o{ PAY : имеет
 
     USER {
         int id
-        string username
-        string first_name
-        string last_name
-    }
-    USERGENERAL {
-        int id
-        int user_id
-    }
-    QUEUE {
-        int id
-        int subject_id
-        int chat_id
-        datetime date
-        datetime close_at
-        string status
-        int message_id
-    }
-    QUEUE_ENTRY {
-        int id
-        int queue_id
-        int user_id
-        int position
-    }
-    SUBMISSION_ATTEMPT {
-        int id
-        int user_id
-        int subject_id
-        int attempts_count
+        string real_name
+        bool is_admin
     }
     SUBJECT {
         int id
         string name
     }
+    QUEUE {
+        int id
+        int subject_id
+        int chat_id
+        datetime data
+        datetime close_at
+        string status
+    }
+    SUBMISSION_ATTEMPT {
+        int id
+        int user_id
+        int subject_id
+        JSON history_position
+    }
     PAY {
         int id
         int user_id
         bool status
-        datetime data_pay
+        datetime date_pay
         datetime date_end
     }
+
 
 ```
 
@@ -64,41 +51,41 @@ erDiagram
 
 ```mermaid
 erDiagram
-    ПОЛЬЗОВАТЕЛЬ ||--o{ ЗАПИСЬ_В_ОЧЕРЕДЬ : участвует
-    ОЧЕРЕДЬ ||--o{ ЗАПИСЬ_В_ОЧЕРЕДЬ : содержит
-    ПОЛЬЗОВАТЕЛЬ ||--o{ ПОДХОДЫ_К_СДАЧЕ : делает
+    ПОЛЬЗОВАТЕЛЬ ||--o{ ОЧЕРЕДЬ : участвует
+    ОЧЕРЕДЬ ||--o{ ПОДХОДЫ_К_СДАЧЕ : связан
     ПРЕДМЕТ ||--o{ ОЧЕРЕДЬ : имеет
     ПРЕДМЕТ ||--o{ ПОДХОДЫ_К_СДАЧЕ : связан
+    ПОЛЬЗОВАТЕЛЬ ||--o{ ПЛАТЕЖ : имеет
 
     ПОЛЬЗОВАТЕЛЬ {
         int id
-        string username
-        string имя
-        string фамилия
+        string real_name
+        bool is_admin
+    }
+    ПРЕДМЕТ {
+        int id
+        string name
     }
     ОЧЕРЕДЬ {
         int id
         int предмет_id
         int chat_id
-        datetime дата
-        datetime закрытие_записи
-        string статус
-        int сообщение_id
-    }
-    ЗАПИСЬ_В_ОЧЕРЕДЬ {
-        int id
-        int очередь_id
-        int пользователь_id
-        int место
+        datetime data
+        datetime close_at
+        string status
     }
     ПОДХОДЫ_К_СДАЧЕ {
         int id
         int пользователь_id
         int предмет_id
-        int сколько_раз_подходил_к_преподу
+        JSON history_position
     }
-    ПРЕДМЕТ {
+    ПЛАТЕЖ {
         int id
-        string название_предмета
+        int пользователь_id
+        bool статус
+        datetime дата_оплаты
+        datetime дата_окончания
     }
+
 ```
