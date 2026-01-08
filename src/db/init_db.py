@@ -1,6 +1,6 @@
 """Создание/инициализация БД."""
 from sqlalchemy import create_engine, Integer, String, Column, ForeignKey, DateTime,JSON, Boolean
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session
+from sqlalchemy.orm import DeclarativeBase, Mapped, sessionmaker, Session
 from datetime import datetime
 
 SQL_URL = "sqlite:///./app.db"
@@ -17,8 +17,10 @@ class Subject(Base):
     __tablename__= "subject"
 
     id: Mapped[int] = Column(Integer, primary_key=True, index=True)
+    chat_id: Mapped[int] = Column(Integer)
     name: Mapped[str] = Column(String)
     
+
 class Queue(Base):
     """Очередь"""
     __tablename__="queue"
@@ -33,13 +35,14 @@ class Queue(Base):
     status:Mapped[str] = Column(String)
 
 
-
 class User(Base):
     """Таблица пользователей"""
     __tablename__="users"
 
     id: Mapped[int] = Column(Integer, primary_key=True)
     name_tg: Mapped[str] = Column(String, unique=True)
+    chat_id: Mapped[int] = Column (Integer)
+
 
 class UserGeneral(Base):
     """Таблица люде, которые запускают голосование"""
@@ -79,4 +82,6 @@ class Pay(Base):
     date_pay: Mapped[datetime] = Column(DateTime)
     date_end: Mapped[datetime] = Column(DateTime)
 
-Base.metadata.create_all(engine)
+
+SessionLocal = sessionmaker(autoflush=False,bind=engine)
+
