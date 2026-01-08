@@ -5,19 +5,14 @@
 """
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command, CommandObject
-from aiogram.types import message
+from aiogram.types import Message
 from db.init_db import *
+import random
 
-
-dp = Dispatcher()
-Base.metadata.create_all(bind=engine)
-def get_db():
-    db:Session = SessionLocal()
-    return db
 
 
 @dp.message(Command(commands=["end"]))
-async def get_queue(ms: message, command: CommandObject):
+async def get_queue(ms: Message, command: CommandObject):
     db = get_db()
     peoples = db.query(User).filter(User.chat_id==ms.chat.id).all()
     queue = []
@@ -39,7 +34,24 @@ async def get_queue(ms: message, command: CommandObject):
 
         history = temp.history_position if temp else []
         queue.append((people, history))
+    k = 0
+    for i in queue:
+        if i[1] != []:
+            continue
+        else:
+            k+=1
     
-    
+    if k <=10:
+
+        queue = sorted(queue, key=lambda x: sum(x[1])/len(x[1]), reverse=True)
+        spisok = ""
+        for i in range(len(queue)):
+            spisok += f'{i+1}. {queue[i][1].name_tg}\n'
+        await ms.answer(spisok) 
         
-        
+    else:
+        spisok = ""
+        for i in range(len(queue)):
+            spisok += f'{i+1}. {queue[i][1].name_tg}\n'
+        await ms.answer(spisok) 
+
