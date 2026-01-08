@@ -1,4 +1,4 @@
-'''Файл для чтения .env'''
+"""Файл для чтения .env"""
 
 from dataclasses import dataclass
 from environs import Env
@@ -6,26 +6,29 @@ from environs import Env
 
 @dataclass
 class TgBot:
-    '''Класс для настройки ТГ бота.'''
+    """Класс для настройки ТГ бота."""
+
     token: str
 
 
 @dataclass
 class LogSettings:
-    '''Класс для настройки логов.'''
+    """Класс для настройки логов."""
+
     level: str
     format: str
 
 
 @dataclass
 class Config:
-    '''Класс для настройки ТГ бота'''
+    """Класс для настройки ТГ бота."""
+
     bot: TgBot
     log: LogSettings
 
 
 def load_config(path: str | None = None) -> Config:
-    '''Непосредственная загрузка данных из .env'''
+    """Непосредственная загрузка данных из .env."""
     env = Env()
     env.read_env(path)
     return Config(

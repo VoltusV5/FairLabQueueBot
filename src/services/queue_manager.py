@@ -3,57 +3,70 @@
 добавление/удаление участников, сортировка, рандомизация,
 формирование финальной очереди.
 """
-from aiogram import Bot, Dispatcher
+
+# from aiogram import Bot, Dispatcher
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from db.init_db import *
-import random
+# import random
+# Надо добавить импорт User
+# Надо добавить импорт get_db
+# МБ: from ..db.init_db import User
+# МБ: from ..db.db import get_db
 
 
-
+# хэндлер для команды /end
 @dp.message(Command(commands=["end"]))
 async def get_queue(ms: Message, command: CommandObject):
+    """Формирование финальной очереди"""
     db = get_db()
-    peoples = db.query(User).filter(User.chat_id==ms.chat.id).all()
+    # получение всех пользователей текущего чата
+    peoples = db.query(User).filter(User.chat_id == ms.chat.id).all()
     queue = []
+    # получение учебного предмета
     subject = (
         db.query(Subject)
         .filter(Subject.name == command.args)
         .first()
-        )
+    )
     if not subject:
         await ms.answer("Предмет не найден")
         return
-    
+
+    # Заполняем queue кортежами (человек, попытки сдачи).
     for people in peoples:
         temp = db.query(SubmissionAttempt)\
-            .filter(SubmissionAttempt.user_id==people.id, 
-                    SubmissionAttempt.subject_id==subject.id)\
-                        .first()
-                    
+            .filter(SubmissionAttempt.user_id == people.id,
+                    SubmissionAttempt.subject_id == subject.id)\
+            .first()
 
         history = temp.history_position if temp else []
         queue.append((people, history))
+
+    # Считаем кол-во человек, которые нет истории сдачи
     k = 0
     for i in queue:
         if i[1] != []:
             continue
         else:
-            k+=1
-    
-    if k <=10:
+            k += 1
 
-        queue = sorted(queue, key=lambda x: sum(x[1])/len(x[1]), reverse=True)
+    '''Если кол-во людей, которые не сдали <= 10, то упорядочиваем людей по
+    среднему кол-ву попыток сдачи'''
+    if k <= 10:
+        queue = sorted(queue, key=lambda x: sum(
+            x[1]) / len(x[1]), reverse=True)
         spisok = ""
         for i in range(len(queue)):
             spisok += f'{i+1}. {queue[i][1].name_tg}\n'
-        k=0
-        await ms.answer(spisok) 
-        
+        k = 0
+        await ms.answer(spisok)
     else:
+        '''Если же более 10 человек не сдали работу,
+        сортировка не выполняется, и очередь выводится без изменения'''
+
         spisok = ""
         for i in range(len(queue)):
             spisok += f'{i+1}. {queue[i][1].name_tg}\n'
-        k=0
-        await ms.answer(spisok) 
-
+        k = 0
+        await ms.answer(spisok)

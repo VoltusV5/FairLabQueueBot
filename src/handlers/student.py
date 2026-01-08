@@ -5,9 +5,9 @@
 """
 
 from aiogram import Router
-from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
-from src.lexicon import LEXICON_RU
+# from aiogram.filters import Command, CommandStart
+# from aiogram.types import Message
+# from src.lexicon import LEXICON_RU
 
 # Инициализируем роутер уровня модуля
 router = Router()

@@ -1,65 +1,73 @@
 """Создание/инициализация БД."""
 
-from sqlalchemy import create_engine, Integer, String, Column, ForeignKey, DateTime, JSON, Boolean
-from sqlalchemy.orm import DeclarativeBase, Mapped, sessionmaker, Session
+from sqlalchemy import Integer, String
+from sqlalchemy import ForeignKey, DateTime, JSON, Boolean
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime
 
 
 class Base(DeclarativeBase):
-    pass
+    """Родительский класс для таблиц БД"""
 
 
 class Subject(Base):
-    """Таблица названий списков"""
+    """Таблица названий предметов (например, ООП)"""
+
     __tablename__ = "subject"
 
-    id: Mapped[int] = Column(Integer, primary_key=True, index=True)
-    chat_id: Mapped[int] = Column(Integer)
-    name: Mapped[str] = Column(String)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    chat_id: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String)
 
 
 class Queue(Base):
-    """Очередь"""
+    """Логика для очереди"""
+
     __tablename__ = "queue"
 
-    id: Mapped[int] = Column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    subject_id: Mapped[int] = Column(ForeignKey("subject.id"))
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id"))
 
-    chat_id: Mapped[int] = Column(Integer)
-    data: Mapped[datetime] = Column(DateTime)
-    close_at: Mapped[datetime] = Column(DateTime)
-    status: Mapped[str] = Column(String)
+    chat_id: Mapped[int] = mapped_column(Integer)
+    data: Mapped[datetime] = mapped_column(DateTime)
+    close_at: Mapped[datetime] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String)
 
 
 class User(Base):
     """Таблица пользователей"""
+
     __tablename__ = "users"
 
-    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
-    tg_id: Mapped[str] = Column(String, unique=True, nullable=False)
-    real_name: Mapped[str] = Column(String, unique=True, nullable=True)
-    is_admin: Mapped[bool] = Column(Boolean, nullable=False, default=False)
-    chat_id: Mapped[int] = Column(Integer)
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True)
+    tg_username: Mapped[str] = mapped_column(
+        String, unique=True, nullable=False)
+    real_name: Mapped[str] = mapped_column(String, unique=True, nullable=True)
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False)
+    chat_id: Mapped[int] = mapped_column(Integer)
 
 
 class SubmissionAttempt(Base):
-    """Таблица для отслеживания на каком месте был пользователь"""
+    """Таблица для отслеживания истории на каком месте был пользователь"""
 
     __tablename__ = "queue_history"
 
-    id: Mapped[int] = Column(Integer, primary_key=True)
-    user_id: Mapped[int] = Column(ForeignKey("users.id"))
-    subject_id: Mapped[int] = Column(ForeignKey("subject.id"))
-    history_position: Mapped[dict] = Column(JSON)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id"))
+    history_position: Mapped[dict] = mapped_column(JSON)
 
 
 class Pay(Base):
     """Таблица для отслеживания подписки"""
+
     __tablename__ = "pay"
 
-    id: Mapped[int] = Column(Integer, primary_key=True)
-    user_id: Mapped[int] = Column(ForeignKey("users.id"))
-    status: Mapped[bool] = Column(Boolean)
-    date_pay: Mapped[datetime] = Column(DateTime)
-    date_end: Mapped[datetime] = Column(DateTime)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[bool] = mapped_column(Boolean)
+    date_pay: Mapped[datetime] = mapped_column(DateTime)
+    date_end: Mapped[datetime] = mapped_column(DateTime)

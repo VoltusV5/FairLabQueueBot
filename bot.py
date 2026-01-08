@@ -1,6 +1,4 @@
-'''
-Главный файл с инициализацией бота
-'''
+"""Главный файл с инициализацией бота."""
 
 import asyncio
 import logging
@@ -11,8 +9,7 @@ from src.handlers import student, admin
 
 
 async def main():
-    '''Основная функция'''
-
+    """Основная функция."""
     # Загружаем конфиг в переменную config
     config: Config = load_config()
 
