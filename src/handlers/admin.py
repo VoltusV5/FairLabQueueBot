@@ -182,7 +182,6 @@ async def process_queue_command(message: Message):
 
 
 def add_user_to_db(
-        chat_id, ######
         tg_username: str,
         chat_id: int,
         real_name: str = "",
@@ -195,7 +194,6 @@ def add_user_to_db(
                 chat_id=chat_id,
                 real_name=real_name,
                 is_admin=is_admin,
-                chat_id=chat_id # добавление chat_id
             )
 
             db.add(new_user)
