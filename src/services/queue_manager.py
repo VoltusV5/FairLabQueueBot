@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 # хэндлер для команды /end
+@router.message(Command(commands=["end"]))
 async def get_queue(ms: Message, command: CommandObject):
     """Формирование финальной очереди"""
     db = get_db2()
@@ -48,5 +49,6 @@ async def get_queue(ms: Message, command: CommandObject):
     spisok = ""
     for i in range(len(queue)):
         spisok += f'{i+1}. {queue[i][0].tg_username}\n'
+
     await ms.answer(spisok)
 
