@@ -57,6 +57,7 @@ async def process_queue_command(message: Message):
 
 
 def add_user_to_db(
+        chat_id, ######
         tg_username: str,
         real_name: str = "",
         is_admin: bool = False):
@@ -66,7 +67,8 @@ def add_user_to_db(
             new_user = User(
                 tg_username=tg_username,
                 real_name=real_name,
-                is_admin=is_admin
+                is_admin=is_admin,
+                chat_id=chat_id # добавление chat_id
             )
 
             db.add(new_user)
@@ -84,7 +86,8 @@ def add_user_to_db(
 async def process_buttons_click(callback: CallbackQuery):
     """Записывает пользователя в очередь."""
     user_tg_username = callback.from_user.username
-    add_user_to_db(user_tg_username)
+    chat_id = callback.message.chat.id      # Добавление chat_id
+    add_user_to_db(chat_id, user_tg_username)
     await callback.answer(text="Вы записаны ✅")
 
     """Сделать проверку: если пользователь уже записан в очередь:

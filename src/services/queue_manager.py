@@ -5,21 +5,21 @@
 """
 
 # from aiogram import Bot, Dispatcher
+from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-from db.init_db import *
-# import random
-# Надо добавить импорт User
-# Надо добавить импорт get_db
-# МБ: from ..db.init_db import User
-# МБ: from ..db.db import get_db
+from ..db.init_db import User, Subject, SubmissionAttempt
+from ..db.db import get_db2
+import logging
 
+logger = logging.getLogger(__name__)
+router = Router()
 
 # хэндлер для команды /end
-@dp.message(Command(commands=["end"]))
+@router.message(Command(commands=["end"]))
 async def get_queue(ms: Message, command: CommandObject):
     """Формирование финальной очереди"""
-    db = get_db()
+    db = get_db2()
     # получение всех пользователей текущего чата
     peoples = db.query(User).filter(User.chat_id == ms.chat.id).all()
     queue = []
@@ -51,8 +51,8 @@ async def get_queue(ms: Message, command: CommandObject):
         else:
             k += 1
 
-    '''Если кол-во людей, которые не сдали <= 10, то упорядочиваем людей по
-    среднему кол-ву попыток сдачи'''
+    # Если, количество людей которые вообще не сдавали <=10, то очередь
+    # строится по среднему
     if k <= 10:
         queue = sorted(queue, key=lambda x: sum(
             x[1]) / len(x[1]), reverse=True)
@@ -62,9 +62,6 @@ async def get_queue(ms: Message, command: CommandObject):
         k = 0
         await ms.answer(spisok)
     else:
-        '''Если же более 10 человек не сдали работу,
-        сортировка не выполняется, и очередь выводится без изменения'''
-
         spisok = ""
         for i in range(len(queue)):
             spisok += f'{i+1}. {queue[i][1].name_tg}\n'

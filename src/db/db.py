@@ -33,3 +33,6 @@ def get_db() -> Session:
         yield db
     finally:
         db.close()
+#Надо
+def get_db2() -> Session:
+    return SessionLocal()
