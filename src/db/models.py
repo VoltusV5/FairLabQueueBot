@@ -1,1 +1,0 @@
-"""ORM-модели (SQLAlchemy)."""

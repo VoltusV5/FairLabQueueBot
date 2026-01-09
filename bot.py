@@ -27,7 +27,6 @@ async def main():
     # Регистриуем роутеры в диспетчере
     dp.include_router(student.router)
     dp.include_router(admin.router)
-    dp.include_router(queue_manager.router)
 
     # Пропускаем накопившиеся апдейты и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)
