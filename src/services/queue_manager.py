@@ -12,12 +12,8 @@ from ..db.init_db import User, Subject, SubmissionAttempt
 from ..db.db import get_db2
 import logging
 
-logger = logging.getLogger(__name__)
-router = Router()
 
-# хэндлер для команды /end
-@router.message(Command(commands=["end"]))
-async def get_queue(ms: Message, command: CommandObject):
+def get_queue(db, ms: Message, command: CommandObject):
     """Формирование финальной очереди"""
     db = get_db2()
     # получение всех пользователей текущего чата
@@ -31,8 +27,8 @@ async def get_queue(ms: Message, command: CommandObject):
         .first()
     )
     if not subject:
-        await ms.answer("Предмет не найден")
-        return
+        """Найден ли предмет"""
+        return -1 
 
     # Заполняем queue кортежами (человек, попытки сдачи).
     for people in peoples:
@@ -44,11 +40,14 @@ async def get_queue(ms: Message, command: CommandObject):
         history = temp.history_position if temp else [0]
         queue.append((people, history))
 
-    queue = sorted(queue, key=lambda x: sum(
-        x[1]) / len(x[1]), reverse=True)
+    queue = sorted(
+        queue, 
+        key=lambda x: sum(x[1]) / len(x[1]),
+        reverse=True
+        )
     spisok = ""
     for i in range(len(queue)):
         spisok += f'{i+1}. {queue[i][0].tg_username}\n'
 
-    await ms.answer(spisok)
+    return spisok
 
