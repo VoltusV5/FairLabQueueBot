@@ -127,6 +127,7 @@ async def process_buttons_click(callback: CallbackQuery):
         logger.error(f"Ошибка при проверке пользователя {error}")
         raise ValueError(f"Ошибка при проверке пользователя {error}")
 
+    print(callback.message.text)
 
     await callback.answer(text="Вы записаны ✅")
 

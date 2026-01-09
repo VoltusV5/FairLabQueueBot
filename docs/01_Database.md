@@ -22,19 +22,21 @@ erDiagram
     SUBJECT {
         int id PK
         int chat_id
-        string name
+        string subject_name
     }
     QUEUE {
         int id PK
         int subject_id FK
         int chat_id
-        datetime data
+        int message_id
+        datetime lesson_date
         datetime close_at
         string status
+        list usernames
     }
     SUBMISSION_ATTEMPT {
         int id PK
-        int user_id FK
+        str tg_username FK
         int subject_id FK
         JSON history_position
     }

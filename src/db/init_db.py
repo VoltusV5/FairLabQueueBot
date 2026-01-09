@@ -33,9 +33,12 @@ class Queue(Base):
     subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id"))
     chat_id: Mapped[int] = mapped_column(ForeignKey("subject.chat_id"))
 
+    message_id: Mapped[int] = mapped_column(Integer)
+
     lesson_date: Mapped[datetime] = mapped_column(DateTime)
     close_at: Mapped[datetime] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String)
+    usernames: Mapped[list] = mapped_column(JSON)
 
     """Для того, чтобы исключить лишние проверки добавляем правило, что
     Если subject_id, lesson_date, chat_id совпадают, то выдаём исключение
@@ -68,7 +71,7 @@ class SubmissionAttempt(Base):
 
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    tg_username: Mapped[str] = mapped_column(ForeignKey("users.tg_username"))
     subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id"))
     history_position: Mapped[list] = mapped_column(JSON)
 
