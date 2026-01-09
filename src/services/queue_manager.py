@@ -40,30 +40,14 @@ async def get_queue(ms: Message, command: CommandObject):
                     SubmissionAttempt.subject_id == subject.id)\
             .first()
 
-        history = temp.history_position if temp else []
+        history = temp.history_position if temp else [0]
         queue.append((people, history))
 
-    # Считаем кол-во человек, которые нет истории сдачи
+    queue = sorted(queue, key=lambda x: sum(
+        x[1]) / len(x[1]), reverse=True)
+    spisok = ""
+    for i in range(len(queue)):
+        spisok += f'{i+1}. {queue[i][1].name_tg}\n'
     k = 0
-    for i in queue:
-        if i[1] != []:
-            continue
-        else:
-            k += 1
+    await ms.answer(spisok)
 
-    # Если, количество людей которые вообще не сдавали <=10, то очередь
-    # строится по среднему
-    if k <= 10:
-        queue = sorted(queue, key=lambda x: sum(
-            x[1]) / len(x[1]), reverse=True)
-        spisok = ""
-        for i in range(len(queue)):
-            spisok += f'{i+1}. {queue[i][1].name_tg}\n'
-        k = 0
-        await ms.answer(spisok)
-    else:
-        spisok = ""
-        for i in range(len(queue)):
-            spisok += f'{i+1}. {queue[i][1].name_tg}\n'
-        k = 0
-        await ms.answer(spisok)
