@@ -13,7 +13,10 @@ from aiogram.types import (
 )
 
 from ..db.db import get_db
-from ..db.queries import *
+from ..db.queries import (
+    add_user_to_db, add_new_queue, add_new_subject, is_in_db,
+    split_queue_command_message, get_subject_id
+)
 from ..db.init_db import User, Subject, Queue
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta
@@ -63,7 +66,9 @@ async def process_help_command(message: Message):
 # Этот хэндлер срабатывает на команду /queue
 @router.message(Command(commands='queue'))
 async def process_queue_command(message: Message):
-    """Отправляет сообщение с записью в очередь."""
+    """Отправляет сообщение с записью в очередь. Создаёт таблицу в БД Subject
+    Создаёт таблицу Queue.
+    """
     try:
         if message.text is None:
             raise ValueError("Отправлено пустое сообщение")
@@ -85,14 +90,20 @@ async def process_queue_command(message: Message):
             # Заполняем БД subject
             add_new_subject(chat_id, subject_name)
 
+        # Переменные для создания БД Queue
         subject_date_and_time = subject_date + ' ' + subject_time
+        subject_id = get_subject_id(chat_id, subject_name)
+        chat_id = message.chat.id
+        message_id = message.message_id
         lesson_date = datetime.strptime(
             subject_date_and_time, "%d.%m.%Y %H:%M")
-        close_queue_at = lesson_date - timedelta(hours=1)
-        print(close_queue_at)
+        close_at = lesson_date - timedelta(hours=1)
         status = QueueStatus.WAITING_FOR_PARTICIPANTS
-        # add_new_queue(chat_id, lesson_date, close_queue_at, status)
+        usernames: list = list()
         # Создаём новую Queue в БД
+        add_new_queue(
+            subject_id, chat_id, message_id, lesson_date,
+            close_at, status.value, usernames)
 
     except ValueError as error:
         # Сообщение пользователю об ошибке
@@ -109,8 +120,7 @@ async def process_queue_command(message: Message):
 # Убирает "часики", которые показывают, что кнопка не работает
 @router.callback_query(F.data.in_(["confirm_participation"]))
 async def process_buttons_click(callback: CallbackQuery):
-    """Записывает пользователя в очередь."""
-
+    """Записывает пользователя в очередь при нажатии кнопки УЧАСТВУЮ."""
     # Получаем имя пользователя и проверяем, существует ли он в БД
     try:
         tg_username = callback.from_user.username
@@ -126,8 +136,6 @@ async def process_buttons_click(callback: CallbackQuery):
     except Exception as error:
         logger.error(f"Ошибка при проверке пользователя {error}")
         raise ValueError(f"Ошибка при проверке пользователя {error}")
-
-    print(callback.message.text)
 
     await callback.answer(text="Вы записаны ✅")
 

@@ -66,9 +66,10 @@ def add_new_subject(chat_id: int, subject_name: str):
 
 
 def add_new_queue(
-        subject_id: int, chat_id: int,
-        lesson_date: datetime, close_date: datetime,
-        status: str):
+        subject_id: int, chat_id: int, message_id: int,
+        lesson_date: datetime, close_at: datetime,
+        status: str,
+        usernames: list):
     """Функция для добавления нового предмета в БД."""
     try:
         with get_db() as db:
@@ -76,9 +77,11 @@ def add_new_queue(
             new_queue = Queue(
                 subject_id=subject_id,
                 chat_id=chat_id,
+                message_id=message_id,
                 lesson_date=lesson_date,
-                close_date=close_date,
-                status=status
+                close_at=close_at,
+                status=status,
+                usernames=usernames
             )
 
             db.add(new_queue)
@@ -98,22 +101,24 @@ def add_new_queue(
             f"Ошибка при добавлении очереди в БД: {error}")
 
 
-'''
-def get_subject_id():
-  """Функция для получения subject_id"""
-   try:
+def get_subject_id(chat_id: int, subject_name: str) -> int:
+    """Функция для получения subject_id"""
+    try:
         with get_db() as db:
 
-            bd_request = db.query(Subject).filter(
-                column == user_data
+            subject = db.query(Subject).filter(
+                Subject.chat_id == chat_id,
+                Subject.subject_name == subject_name
             ).first()
-            return bd_request is not None
+
+            if subject:
+                return subject.id
+            else:
+                raise ValueError(f"Subject с name '{subject_name}'"
+                                 f"и chat_id '{chat_id}' не найден.")
     except Exception as error:
-        logger.error(f"Ошибка при проверки существования"
-                     f"{user_data} в таблице {bd_model}")
-        raise ValueError(
-            f"Ошибка при проверки существования в БД: {error}")
-'''
+        logger.error(f"Ошибка при получении subject id {error}")
+        raise ValueError(f"Ошибка при получении subject id {error}")
 
 
 def add_user_to_db(
