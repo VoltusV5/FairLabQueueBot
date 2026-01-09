@@ -70,7 +70,7 @@ class SubmissionAttempt(Base):
         Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id"))
-    history_position: Mapped[dict] = mapped_column(JSON)
+    history_position: Mapped[list] = mapped_column(JSON)
 
 
 class Pay(Base):
