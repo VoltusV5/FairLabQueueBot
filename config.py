@@ -9,6 +9,7 @@ class TgBot:
     """Класс для настройки ТГ бота."""
 
     token: str
+    admin_ids: list[int]
 
 
 @dataclass
@@ -31,7 +32,9 @@ def load_config(path: str | None = None) -> Config:
     """Непосредственная загрузка данных из .env."""
     env = Env()
     env.read_env(path)
+    admin_ids = [int(admin_id)
+                 for admin_id in env.str("SUPER_ADMINS").split(",")]
     return Config(
-        bot=TgBot(token=env('BOT_TOKEN')),
+        bot=TgBot(token=env("BOT_TOKEN"), admin_ids=admin_ids),
         log=LogSettings(level=env("LOG_LEVEL"), format=env("LOG_FORMAT"))
     )

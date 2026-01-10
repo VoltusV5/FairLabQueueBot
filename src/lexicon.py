@@ -4,10 +4,12 @@ LEXICON_RU: dict[str, str] = {
     '/start': 'Бот @FairLabQueueBot запущен',
     '/help': 'Разраб, сделай список всех команд',
     'no_echo': 'Я не понял, что ты хочешь',
-    '/queue_error_message': (
+    '/queue_error_message_ValueError': (
         "❌ Неправильный формат команды!\n\n"
         "📝 Правильный формат:\n"
         "/queue Название предмета дата.месяц.год часы:минуты\n\n"
         "💡 Пример:\n"
-        "/queue Математика 15.01.2026 14:30")
+        "/queue Математика 15.01.2026 14:30"),
+    '/queue_error_message_UniqueConstraint': (
+        "❌ Такая запись уже существует")
 }

@@ -58,6 +58,8 @@ class User(Base):
         Integer, primary_key=True, autoincrement=True)
     tg_username: Mapped[str] = mapped_column(
         String, unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        Integer, unique=True, nullable=False)
     real_name: Mapped[str] = mapped_column(String, unique=True, nullable=True)
     is_admin: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False)
