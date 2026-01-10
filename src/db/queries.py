@@ -4,6 +4,7 @@ import logging
 from ..db.db import get_db
 from ..db.init_db import User, Subject, Queue
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, timedelta
 
 # Импортируем логгер
@@ -144,3 +145,27 @@ def add_user_to_db(
         except Exception as error:
             db.rollback()
             logger.error(f"Ошибка при добавлении пользователя в БД: {error}")
+
+
+def add_tgname_in_queue(tg_username:str, message_id: int):
+    """Функция для добавления пользователя в список"""
+    with get_db() as db:
+        try:
+            
+                queue = db.query(Queue).filter(Queue.message_id==message_id).first()
+                if queue.usernames is None:
+                    queue.usernames = []
+
+                if tg_username in queue.usernames:
+                    return -1
+                
+                else:
+                    queue.usernames.append(tg_username)
+                flag_modified(queue, "usernames")
+                db.commit()
+                logger.info(f"Добавлен новый tg_username в usernames: {tg_username}")
+
+        except:
+            db.rollback()
+            logger.error(f"Ошибка при добавлении tg_username в список usernames")
+    
