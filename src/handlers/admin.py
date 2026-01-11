@@ -33,9 +33,11 @@ router = Router()
 
 # Создаем объект инлайн-кнопок
 btn_participate = [
-    InlineKeyboardButton(text="✅ Участвую", callback_data="confirm_participation"),
-    InlineKeyboardButton(text="Завершить досрочно", callback_data="close_queue")
-    ]
+    InlineKeyboardButton(
+        text="✅ Участвую", callback_data="confirm_participation"),
+    InlineKeyboardButton(text="Завершить досрочно",
+                         callback_data="close_queue")
+]
 
 
 # Создаем объект инлайн-клавиатуры
@@ -97,7 +99,8 @@ async def process_queue_command(message: Message):
         subject_date_and_time = subject_date + ' ' + subject_time
         subject_id = get_subject_id(chat_id, subject_name)
         chat_id = message.chat.id
-        message_id = message.message_id + 1  ## Сделал костыль не уверен что всегда будет работать, тк разные айдишники у сообшений на 1 отличаются
+        # Сделал костыль не уверен что всегда будет работать, тк разные айдишники у сообшений на 1 отличаются
+        message_id = message.message_id + 1
         lesson_date = datetime.strptime(
             subject_date_and_time, "%d.%m.%Y %H:%M")
         close_at = lesson_date - timedelta(hours=1)
@@ -135,7 +138,7 @@ async def process_buttons_click(callback: CallbackQuery):
             raise ValueError("tg_username не может быть None")
         if not is_in_db(tg_username, User, "tg_username"):
             add_user_to_db(tg_username, chat_id)
-        
+
         if not is_in_db(callback.message.message_id, Queue, "message_id"):
             raise ValueError("Предмет не найден, ошибка в добавлении очереди")
         if is_in_db(callback.message.message_id, Queue, "message_id"):
@@ -146,12 +149,9 @@ async def process_buttons_click(callback: CallbackQuery):
                 await callback.answer(text="Вы записаны ✅")
                 logger.info("Пользователь успешно добавлен в список")
 
-    
     except Exception as error:
         logger.error(f"Ошибка при проверке пользователя {error}")
         raise ValueError(f"Ошибка при проверке пользователя {error}")
-
-    
 
     """Сделать проверку: если пользователь уже записан в очередь:
     сообщение "Вы уже записаны" и ничего не делать
@@ -160,15 +160,18 @@ async def process_buttons_click(callback: CallbackQuery):
     """Переместить в файл student.py"""
 
 
-
 @router.callback_query(F.data.in_(["close_queue"]))
 async def process_buttons_click(callback: CallbackQuery):
     """Завершение досрочное только админам"""
-    ## Но фильтр позже добавим чтобы тестить было проще
-    await callback.message.edit_reply_markup(reply_markup=None)  # Убираем кнопки
+    # Но фильтр позже добавим чтобы тестить было проще
+    # Убираем кнопки
+    await callback.message.edit_reply_markup(reply_markup=None)
     text = callback.message.text
-    subject = text[text.find("на")+3:].split("\n")[0]   ##Забрал название предмета для кнопки
-    head = f"Список на {subject}\n{ text[text.find("на")+3:].split("\n")[1]}\n{ text[text.find("на")+3:].split("\n")[2]}\n\n"
-    queue : str = head + get_queue(callback.message, subject)
+    # Разбил сообщение, чтобы сформировать сообщение с записанными людьми
+    splited_message = text[text.find("на") + 3:].split("\n")
+    # Забрал название предмета для кнопки, а также дату и время 
+    message_subject, message_date, message_time = splited_message[0:3]
+    head = f"Список на {message_subject}\n{message_date}\n{message_time}\n\n"
+    queue: str = head + get_queue(callback.message, message_subject)
     print(queue)
     await callback.message.answer(queue)

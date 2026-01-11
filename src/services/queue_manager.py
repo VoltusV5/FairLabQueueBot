@@ -17,7 +17,8 @@ def get_queue(ms: Message, command: CommandObject | str):
     """Формирование финальной очереди"""
     db = get_db2()
     # получение пользователей из списка
-    peoples = db.query(Queue).filter(Queue.message_id == ms.message_id).first().usernames
+    peoples = db.query(Queue).filter(
+        Queue.message_id == ms.message_id).first().usernames
     queue = []
     # получение учебного предмета
     subject = (
