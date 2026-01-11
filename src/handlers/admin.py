@@ -42,6 +42,15 @@ btn_participate = [
                          callback_data="close_queue")
 ]
 
+# Кнопки для подтверждения завершения очереди
+btn_confirm = [
+    InlineKeyboardButton(
+        text="Да, завершить",
+        callback_data="really_close_queue"),
+    InlineKeyboardButton(
+        text="Нет, отмена",
+        callback_data="back_to_queue")
+]
 
 # Создаем объект инлайн-клавиатуры
 keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_participate])
@@ -188,12 +197,51 @@ async def process_buttons_click(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.in_(["close_queue"]))
+async def close_queue_start(callback: CallbackQuery):
+    """Досрочное завершение очереди подтверждение действия"""
+    if not isinstance(callback.message, Message):
+        await callback.answer("Сообщение недоступно или удалено",
+                              show_alert=True)
+        return
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    text = callback.message.text or ""  # Если None, то делаем пустую строку
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_confirm])
+    await callback.message.edit_text(
+        text + "\n\n" + "Вы уверены, что хотите досрочно завершить очередь?",
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data.in_(["back_to_queue"]))
+async def close_queue_discard(callback: CallbackQuery):
+    """Досрочное завершение очереди подтверждение действия"""
+    if not isinstance(callback.message, Message):
+        await callback.answer("Сообщение недоступно или удалено",
+                              show_alert=False)
+        return
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    text = callback.message.text or ""  # Если None, то делаем пустую строку
+    splited_text = text.split("\n\n")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_participate])
+    await callback.message.edit_text(
+        splited_text[0],  # Только информация об очереди
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data.in_(["really_close_queue"]))
 async def process_buttons_click(callback: CallbackQuery):
     """Завершение досрочное только админам"""
     # Но фильтр позже добавим чтобы тестить было проще
     # Убираем кнопки
+    if not isinstance(callback.message, Message):
+        await callback.answer("Сообщение недоступно или удалено",
+                              show_alert=True)
+        return
     await callback.message.edit_reply_markup(reply_markup=None)
-    text = callback.message.text
+    text = callback.message.text or ""
     # Разбил сообщение, чтобы сформировать сообщение с записанными людьми
     splited_message = text[text.find("на") + 3:].split("\n")
     # Забрал название предмета для кнопки, а также дату и время
@@ -201,7 +249,11 @@ async def process_buttons_click(callback: CallbackQuery):
     head = f"Список на {message_subject}\n{message_date}\n{message_time}\n\n"
     queue: str = head + get_queue(callback.message, message_subject)
     print(queue)
-    await callback.message.answer(queue)
+    await callback.message.edit_text(queue)
+    tg_username = callback.from_user.username
+    await callback.message.answer(
+        f"Пользователь @{tg_username} завершил очередь досрочно")
+    await callback.answer()
 
 
 def is_user_superadmin(func):
