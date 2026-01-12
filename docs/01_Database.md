@@ -15,9 +15,9 @@ erDiagram
     USER {
         int id PK
         string tg_username UK
+        int tg_id
         string real_name
         bool is_admin
-        int chat_id
     }
     SUBJECT {
         int id PK
@@ -42,11 +42,16 @@ erDiagram
     }
     PAY {
         int id PK
-        int user_id FK
-        bool status
+        int chat_id FK
+        string status
+        string subscription_level
         datetime date_pay
-        datetime date_end
     }
-
-
+    CHAT {
+        int id PK
+        int chat_id FK
+        string subscription_level
+        datetime subscription_start_date
+        datetime subscription_end_date
+    }
 ```
