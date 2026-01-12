@@ -15,7 +15,7 @@ from ..db.db import get_db
 from ..db.queries import (
     add_user_to_db, add_new_queue, add_new_subject, is_in_db,
     split_queue_command_message, get_subject_id, get_user, is_queue_in_db,
-    change_realname, add_tgname_in_queue
+    change_realname, add_tgname_in_queue, remove_tgname_in_queue
 )
 
 from ..db.init_db import User, Subject, Queue
@@ -38,8 +38,12 @@ router = Router()
 btn_participate = [
     InlineKeyboardButton(
         text="✅ Участвую", callback_data="confirm_participation"),
+    InlineKeyboardButton(text="❌ Отменить участие",
+                         callback_data="cancel_participation"),
+    InlineKeyboardButton(text="Удалить запись",
+                         callback_data="del_queue"),
     InlineKeyboardButton(text="Завершить досрочно",
-                         callback_data="close_queue")
+                         callback_data="close_queue"),
 ]
 
 # Кнопки для подтверждения завершения очереди
@@ -50,6 +54,16 @@ btn_confirm = [
     InlineKeyboardButton(
         text="Нет, отмена",
         callback_data="back_to_queue")
+]
+
+# Кнопка, чтобы отметиться последним сдавшим
+btn_after_filling_queue = [
+    InlineKeyboardButton(
+        text="Я последний",
+        callback_data="last_participant"),
+    InlineKeyboardButton(
+        text="Добавить себя в конец очереди",
+        callback_data="add_last_user_in_queue")
 ]
 
 # Создаем объект инлайн-клавиатуры
@@ -151,10 +165,20 @@ async def process_queue_command(message: Message):
         raise ValueError(f"Ошибка команды queue {error}")
 
 
-# Убирает "часики", которые показывают, что кнопка не работает
-@router.callback_query(F.data.in_(["confirm_participation"]))
+# кнопка "участвую" и "отменить участие"
+@router.callback_query(F.data.in_(
+    ["confirm_participation", "cancel_participation"]))
 async def process_buttons_click(callback: CallbackQuery):
-    """Записывает пользователя в очередь при нажатии кнопки УЧАСТВУЮ."""
+    """Записывает пользователя в очередь при нажатии кнопки УЧАСТВУЮ.
+    Или удаляем пользователя из очереди, если человек передумал, 
+    при нажатии ОТМЕНИТЬ УЧАСТИЕ
+    """
+    action = "add" if callback.data == "confirm_participation" else "remove"
+    success_message = ("Вы записаны ✅"
+                       if action == "add" else "Участие отменено ❌")
+    in_queue_message = ("Вы уже записаны!"
+                        if action == "remove" else "Вы и так не в очереди")
+
     try:
         # Проверка, чтобы сообщение было не пустым
         if callback.message is None:
@@ -177,23 +201,24 @@ async def process_buttons_click(callback: CallbackQuery):
         # Проверка на существование записи об очереди в БД
         if not is_in_db(message_id, Queue, "message_id"):
             raise ValueError("Предмет не найден, ошибка в добавлении очереди")
-        # Добавление пользователя в очередь
-        if add_tgname_in_queue(callback.from_user.username, message_id) == -1:
-            await callback.answer("Вы уже записаны!")
-            logger.info("Пользователь уже есть в БД")
+        # Добавление/Удаление пользователя в очереди
+        if action == "add":
+            success = add_tgname_in_queue(
+                callback.from_user.username, message_id)
         else:
-            await callback.answer(text="Вы записаны ✅")
-            logger.info("Пользователь успешно добавлен в список")
+            success = remove_tgname_in_queue(
+                callback.from_user.username, message_id)
+        # Если функция вернула -1, то пользователь есть в БД
+        if success == -1:
+            await callback.answer(in_queue_message)
+            logger.info(f"Пользователь {in_queue_message}")
+        else:
+            await callback.answer(success_message)
+            logger.info(f"Пользователь {success_message}")
 
     except Exception as error:
         logger.error(f"Ошибка при проверке пользователя {error}")
         raise ValueError(f"Ошибка при проверке пользователя {error}")
-
-    """Сделать проверку: если пользователь уже записан в очередь:
-    сообщение "Вы уже записаны" и ничего не делать
-    Если ещё не записан: сообщение "Вы записаны ✅" и записать в БД
-    """
-    """Переместить в файл student.py"""
 
 
 @router.callback_query(F.data.in_(["close_queue"]))
@@ -233,8 +258,7 @@ async def close_queue_discard(callback: CallbackQuery):
 
 @router.callback_query(F.data.in_(["really_close_queue"]))
 async def process_buttons_click(callback: CallbackQuery):
-    """Завершение досрочное только админам"""
-    # Но фильтр позже добавим чтобы тестить было проще
+    """Досрочное завершение очереди."""
     # Убираем кнопки
     if not isinstance(callback.message, Message):
         await callback.answer("Сообщение недоступно или удалено",
@@ -249,52 +273,38 @@ async def process_buttons_click(callback: CallbackQuery):
     head = f"Список на {message_subject}\n{message_date}\n{message_time}\n\n"
     queue: str = head + get_queue(callback.message, message_subject)
     print(queue)
-    await callback.message.edit_text(queue)
+    # Кнопка "Я последний" и "добавить себя в конец списка"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_after_filling_queue])
+    # Отправляем финальную очередь
+    await callback.message.edit_text(queue, reply_markup=keyboard)
     tg_username = callback.from_user.username
     await callback.message.answer(
         f"Пользователь @{tg_username} завершил очередь досрочно")
     await callback.answer()
 
 
-def is_user_superadmin(func):
-    """Декоратор для проверки супер админ пользователь или нет.
-    Применяется для функций, с которыми может работать только супер админ
+@router.callback_query(F.data.in_(["del_queue"]))
+async def process_del_queue_click(callback: CallbackQuery):
+    """Функция для удаления очереди. Если создал запись на предмет,
+    а потом понял, что она не нужна. Удаление таблицы Queue в БД и сообщения
     """
-    async def wrapper(message: Message, *args, **kwargs):
-        user_message = message.from_user
-        if user_message is None or user_message.id not in config.bot.admin_ids:
-            await message.reply("Недостаточно прав доступа, вы не супер админ")
-            return
-        return await func(message, *args, **kwargs)
-    return wrapper
+    # смотри схему в miro
+    pass
 
 
-def is_user_admin(func):
-    """Декоратор для проверки админ пользователь или нет.
-    Применяется для функций, с которыми может работать только супер админ
+@router.callback_query(F.data.in_(["last_participant"]))
+async def process_last_participant_click(callback: CallbackQuery):
+    """Функция для отметки последнего участника в очереди,
+    который успел сдать предмет
     """
-    async def wrapper(message: Message, *args, **kwargs):
-        user = message.from_user
-        chat_id = message.chat.id
-        if user is None:
-            return
-        user_data = get_user(chat_id, user.id)
-        # Если пользователь не админ и не супер админ, то у него нет доступа
-        if (not user_data["is_admin"]
-                and user_data["id"] not in config.bot.admin_ids):
-            await message.reply("Недостаточно прав доступа, вы не админ")
-            return
-        return await func(message, *args, **kwargs)
-    return wrapper
+    # смотри схему в miro
+    pass
 
 
-# Этот хэндлер срабатывает на команду /setadmin
-@router.message(Command(commands='setadmin'))
-@is_user_superadmin
-async def process_setadmin_command(message: Message):
-    """Позволяет супер админу назначать админов.
-    Назначает пользователя админом из-за декоратора is_user_superadmin
-    """
+@router.callback_query(F.data.in_(["add_last_user_in_queue"]))
+async def process_last_participant_click(callback: CallbackQuery):
+    """Функция для добавления себя в конец уже сформированной очереди"""
+    # смотри схему в miro
     pass
 
 

@@ -233,3 +233,8 @@ def change_realname(tg_username: str, new_realname: str):
         logger.error(f"Ошибка при изменении realname: {error}")
         raise ValueError(
             f"Ошибка при изменении realname: {error}")
+
+
+def remove_tgname_in_queue(tg_username: str, message_id: int):
+    """Функция для удаления пользователя из записи на предмет"""
+    pass
