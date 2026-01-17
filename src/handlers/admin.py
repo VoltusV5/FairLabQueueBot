@@ -37,14 +37,18 @@ router = Router()
 
 # Создаем объект инлайн-кнопок
 btn_participate = [
+    [
     InlineKeyboardButton(
         text="✅ Участвую", callback_data="confirm_participation"),
     InlineKeyboardButton(text="❌ Отменить участие",
-                         callback_data="cancel_participation"),
+                         callback_data="cancel_participation")
+    ],
+    [
     InlineKeyboardButton(text="Удалить запись",
                          callback_data="del_queue"),
     InlineKeyboardButton(text="Завершить досрочно",
-                         callback_data="close_queue"),
+                         callback_data="close_queue")
+    ]
 ]
 
 # Кнопки для подтверждения завершения очереди
@@ -68,7 +72,7 @@ btn_after_filling_queue = [
 ]
 
 # Создаем объект инлайн-клавиатуры
-keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_participate])
+keyboard = InlineKeyboardMarkup(inline_keyboard=btn_participate)
 
 # Подгружаем Config
 config: Config = load_config()
