@@ -236,7 +236,7 @@ def change_realname(tg_username: str, new_realname: str):
 
 
 
-def add_submission_attemp(tgname, subject_id):
+def add_submission_attempt(tgname, subject_id):
     tgname = "@" + tgname 
     tgname = tgname.replace(" ", "")
     print(tgname , "in add")
@@ -258,12 +258,12 @@ def add_history_position(queue: str, subject_id: int):
     Функция для добавления позиции пользователя в историю позиций
     chat_id и subject_name для того чтобы достать subject_id
     """
-    positions = [queue.split(".")]    #Запись выглядит так чуть поменять кое что [["1", "tgname1"], ["2", "tgname2"]] , на айди потом изи свапнуть
+    positions = [i.split('.') for i in queue.split("\n")]    #Запись выглядит так чуть поменять кое что [["1", "tgname1"], ["2", "tgname2"]] , на айди потом изи свапнуть
     print(positions)
     with get_db() as db:
         try:
                 for pos, tgname in positions:
-                    tgname = tgname.replace(" ", "").replace("\n", "")
+                    tgname = tgname.replace(" ", "")
                     print(tgname, "in history")
                     people_history: SubmissionAttempt = db.query(SubmissionAttempt)\
                         .filter(SubmissionAttempt.subject_id == subject_id, 
@@ -271,12 +271,17 @@ def add_history_position(queue: str, subject_id: int):
                                 ).first()
                     if people_history.history_position is None:
                         people_history.history_position = []
-                    
+                    print("Прошли1")
                     people_history.history_position.append(int(pos))
+                    
                     flag_modified(people_history, "history_position")
+                    print("*******")
                     db.commit()
                     logger.info(f"Обновлена история позиций у {tgname}")
         except Exception as e:
+            #Если пользователь один в списке то лог выдаёт ошибку т.к. при split в position будет [[1, "@tg"], ['']], 
+            # и пустая вызовёт ошибку но она ни на что не влияет
+
             db.rollback()
             logger.error(f"Ошибка при обновлении списка позиций")
             print(e)

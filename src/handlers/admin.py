@@ -15,7 +15,7 @@ from ..db.db import get_db
 from ..db.queries import (
     add_user_to_db, add_new_queue, add_new_subject, is_in_db,
     split_queue_command_message, get_subject_id, get_user, is_queue_in_db,
-    change_realname, add_tgname_in_queue, add_history_position, add_submission_attemp
+    change_realname, add_tgname_in_queue, add_history_position, add_submission_attempt
 )
 
 from ..db.init_db import User, Subject, Queue
@@ -250,8 +250,17 @@ async def process_buttons_click(callback: CallbackQuery):
     queue_head, queue = head + get_queue(callback.message, message_subject), get_queue(callback.message, message_subject)
     print(queue)
     await callback.message.edit_text(queue_head)
-    add_submission_attemp(callback.from_user.username, message_subject)
-    add_history_position(queue, get_subject_id(callback.message.chat.id, message_subject))
+
+    add_submission_attempt(
+            callback.from_user.username, 
+            get_subject_id(callback.message.chat.id, message_subject)
+                           )
+    
+    add_history_position(
+                    queue, 
+                    get_subject_id(callback.message.chat.id, message_subject)
+                        )
+    
     tg_username = callback.from_user.username
     await callback.message.answer(
         f"Пользователь @{tg_username} завершил очередь досрочно")
