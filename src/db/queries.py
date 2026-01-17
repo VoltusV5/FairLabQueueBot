@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func
 from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
 
 # Импортируем логгер
 logger = logging.getLogger(__name__)
@@ -236,15 +237,37 @@ def change_realname(tg_username: str, new_realname: str):
 
 
 
-def remove_tgname_in_queue(tg_username: str, message_id: int):
-    """Функция для удаления пользователя из записи на предмет"""
-    pass
+def remove_tgname_in_queue(tg_username: str, message_id: int, subject_id: int, chat_id: int):
+    """Функция для удаления пользователя из записи на предмет
+    Обновляет Queue
+    """
+    
+    with get_db() as db:
+        # убираем из списка очереди
+        try:
+            queue:Queue = db.query(Queue).filter(
+                Queue.chat_id==chat_id, 
+                Queue.message_id == message_id, 
+                Queue.subject_id==subject_id).first()
+            index = queue.usernames.index(tg_username)
+            del queue.usernames[index]
+
+            flag_modified(queue, "usernames")
+            db.commit()
+            logger.info(f"Удален из списка очереди "
+                        f"tg_username в usernames: {tg_username}")
+            return 0
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Ошибка при удалении из Queue")
+            print(e)
+
+
 
 
 def add_submission_attempt(tgname, subject_id):
     tgname = "@" + tgname 
     tgname = tgname.replace(" ", "")
-    print(tgname , "in add")
     with get_db() as db:
         try:
             if db.query(SubmissionAttempt).filter(SubmissionAttempt.subject_id==subject_id, SubmissionAttempt.tg_username==tgname).first() is None:
@@ -269,18 +292,18 @@ def add_history_position(queue: str, subject_id: int):
         try:
                 for pos, tgname in positions:
                     tgname = tgname.replace(" ", "")
-                    print(tgname, "in history")
+
                     people_history: SubmissionAttempt = db.query(SubmissionAttempt)\
                         .filter(SubmissionAttempt.subject_id == subject_id, 
                                 SubmissionAttempt.tg_username == tgname
                                 ).first()
                     if people_history.history_position is None:
                         people_history.history_position = []
-                    print("Прошли1")
+
                     people_history.history_position.append(int(pos))
                     
                     flag_modified(people_history, "history_position")
-                    print("*******")
+
                     db.commit()
                     logger.info(f"Обновлена история позиций у {tgname}")
         except Exception as e:

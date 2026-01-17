@@ -15,7 +15,7 @@ from ..db.db import get_db
 from ..db.queries import (
     add_user_to_db, add_new_queue, add_new_subject, is_in_db,
     split_queue_command_message, get_subject_id, get_user, is_queue_in_db,
-    change_realname, add_tgname_in_queue, add_history_position, add_submission_attempt
+    change_realname, add_tgname_in_queue, add_history_position, add_submission_attempt, remove_tgname_in_queue
 
 )
 
@@ -211,12 +211,18 @@ async def process_buttons_click(callback: CallbackQuery):
             success = add_tgname_in_queue(
                 callback.from_user.username, message_id)
         else:
+            text = callback.message.text or ""
+            # Разбил сообщение, чтобы сформировать сообщение с записанными людьми
+            splited_message = text[text.find("на") + 3:].split("\n")
+            # Забрал название предмета
+            message_subject = splited_message[0]
             success = remove_tgname_in_queue(
-                callback.from_user.username, message_id)
+                callback.from_user.username, message_id, get_subject_id(chat_id,message_subject), chat_id)
         # Если функция вернула -1, то пользователь есть в БД
         if success == -1:
             await callback.answer(in_queue_message)
             logger.info(f"Пользователь {in_queue_message}")
+            
         else:
             await callback.answer(success_message)
             logger.info(f"Пользователь {success_message}")
