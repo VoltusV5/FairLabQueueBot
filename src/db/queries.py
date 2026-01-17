@@ -5,7 +5,7 @@ from ..db.db import get_db
 from ..db.init_db import User, Subject, Queue, SubmissionAttempt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import func
+from sqlalchemy import func, delete
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
@@ -314,3 +314,20 @@ def add_history_position(queue: str, subject_id: int):
             logger.error(f"Ошибка при обновлении списка позиций")
             print(e)
 
+def remove_queue(username:str, chat_id:int, message_id:int, subject_id:int):
+    """Полное удаление Queue строки"""
+
+    with get_db() as db:
+        try:
+            stm = delete(Queue).where(
+                Queue.message_id==message_id,
+                Queue.chat_id==chat_id,
+                Queue.subject_id==subject_id)
+            db.execute(stm)
+            db.commit()
+            logger.info("Успешное удаление Queue в {chat_id}")
+        except Exception as e:
+            print(e)
+            logger.error("Ошибка при удалении всей очереди Queue в {chat_id}")
+def remove_subject():
+    pass

@@ -15,7 +15,8 @@ from ..db.db import get_db
 from ..db.queries import (
     add_user_to_db, add_new_queue, add_new_subject, is_in_db,
     split_queue_command_message, get_subject_id, get_user, is_queue_in_db,
-    change_realname, add_tgname_in_queue, add_history_position, add_submission_attempt, remove_tgname_in_queue
+    change_realname, add_tgname_in_queue, add_history_position, add_submission_attempt, remove_tgname_in_queue,
+    remove_queue
 
 )
 
@@ -311,10 +312,24 @@ async def process_buttons_click(callback: CallbackQuery):
 @router.callback_query(F.data.in_(["del_queue"]))
 async def process_del_queue_click(callback: CallbackQuery):
     """Функция для удаления очереди. Если создал запись на предмет,
-    а потом понял, что она не нужна. Удаление таблицы Queue в БД и сообщения
+    а потом понял, что она не нужна. Удаление всей строки Queue в БД и сообщения
     """
-    # смотри схему в miro
-    pass
+    username = "@" + callback.from_user.username
+    chat_id = callback.message.chat.id
+    message_id = callback.message.message_id
+    text = callback.message.text or ""
+    # Разбил сообщение, чтобы сформировать сообщение с записанными людьми
+    splited_message = text[text.find("на") + 3:].split("\n")
+    # Забрал название предмета
+    message_subject = splited_message[0]
+    subjcet_id = get_subject_id(chat_id, message_subject)
+
+    text = f"Пользователь {callback.from_user.username}.\nУдалил очередь {datetime.now().strftime("%d.%m.%Y %H:%M")}"
+    remove_queue(username, chat_id, message_id, subjcet_id)
+    await callback.message.delete()
+    await callback.message.answer(text)
+
+
 
 
 @router.callback_query(F.data.in_(["last_participant"]))
