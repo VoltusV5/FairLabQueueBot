@@ -2,7 +2,7 @@
 
 import logging
 from ..db.db import get_db
-from ..db.init_db import User, Subject, Queue
+from ..db.init_db import User, Subject, Queue, SubmissionAttempt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func
@@ -235,6 +235,59 @@ def change_realname(tg_username: str, new_realname: str):
             f"Ошибка при изменении realname: {error}")
 
 
+
 def remove_tgname_in_queue(tg_username: str, message_id: int):
     """Функция для удаления пользователя из записи на предмет"""
     pass
+
+
+def add_submission_attempt(tgname, subject_id):
+    tgname = "@" + tgname 
+    tgname = tgname.replace(" ", "")
+    print(tgname , "in add")
+    with get_db() as db:
+        try:
+            if db.query(SubmissionAttempt).filter(SubmissionAttempt.subject_id==subject_id, SubmissionAttempt.tg_username==tgname).first() is None:
+                new_attempt = SubmissionAttempt(tg_username=tgname, subject_id=subject_id, history_position=[])
+                db.add(new_attempt)
+                db.commit()
+                db.refresh(new_attempt)
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Ошибка при добавлении в SubmisiionAttempt")
+            print(e)
+
+
+def add_history_position(queue: str, subject_id: int):
+    """
+    Функция для добавления позиции пользователя в историю позиций
+    chat_id и subject_name для того чтобы достать subject_id
+    """
+    positions = [i.split('.') for i in queue.split("\n")]    #Запись выглядит так чуть поменять кое что [["1", "tgname1"], ["2", "tgname2"]] , на айди потом изи свапнуть
+    print(positions)
+    with get_db() as db:
+        try:
+                for pos, tgname in positions:
+                    tgname = tgname.replace(" ", "")
+                    print(tgname, "in history")
+                    people_history: SubmissionAttempt = db.query(SubmissionAttempt)\
+                        .filter(SubmissionAttempt.subject_id == subject_id, 
+                                SubmissionAttempt.tg_username == tgname
+                                ).first()
+                    if people_history.history_position is None:
+                        people_history.history_position = []
+                    print("Прошли1")
+                    people_history.history_position.append(int(pos))
+                    
+                    flag_modified(people_history, "history_position")
+                    print("*******")
+                    db.commit()
+                    logger.info(f"Обновлена история позиций у {tgname}")
+        except Exception as e:
+            #Если пользователь один в списке то лог выдаёт ошибку т.к. при split в position будет [[1, "@tg"], ['']], 
+            # и пустая вызовёт ошибку но она ни на что не влияет
+
+            db.rollback()
+            logger.error(f"Ошибка при обновлении списка позиций")
+            print(e)
+
