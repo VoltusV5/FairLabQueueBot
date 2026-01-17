@@ -288,9 +288,8 @@ async def process_buttons_click(callback: CallbackQuery):
     # Кнопка "Я последний" и "добавить себя в конец списка"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_after_filling_queue])
     # Отправляем финальную очередь
-    await callback.message.edit_text(queue, reply_markup=keyboard)
 
-    await callback.message.edit_text(queue_head)
+    await callback.message.edit_text(queue_head, reply_markup=keyboard)
 
     add_submission_attempt(
             callback.from_user.username, 
@@ -304,9 +303,9 @@ async def process_buttons_click(callback: CallbackQuery):
     
 
     tg_username = callback.from_user.username
-    await callback.message.answer(
-        f"Пользователь @{tg_username} завершил очередь досрочно")
-    await callback.answer()
+    # await callback.message.answer(
+    #     f"Пользователь @{tg_username} завершил очередь досрочно")
+    # await callback.answer()
 
 
 @router.callback_query(F.data.in_(["del_queue"]))
@@ -337,7 +336,7 @@ async def process_last_participant_click(callback: CallbackQuery):
     """Функция для отметки последнего участника в очереди,
     который успел сдать предмет
     """
-    # смотри схему в miro
+
     pass
 
 
