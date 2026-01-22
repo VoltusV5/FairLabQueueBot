@@ -16,7 +16,7 @@ from ..db.queries import (
     add_user_to_db, add_new_queue, add_new_subject, is_in_db,
     split_queue_command_message, get_subject_id, get_user, is_queue_in_db,
     change_realname, add_tgname_in_queue, add_history_position, add_submission_attempt, remove_tgname_in_queue,
-    remove_queue
+    remove_queue, save_position_not_pass
 
 )
 
@@ -323,7 +323,7 @@ async def process_del_queue_click(callback: CallbackQuery):
     message_subject = splited_message[0]
     subjcet_id = get_subject_id(chat_id, message_subject)
 
-    text = f"Пользователь {callback.from_user.username}.\nУдалил очередь {datetime.now().strftime("%d.%m.%Y %H:%M")}"
+    text = f"Пользователь {"@" + callback.from_user.username}.\nУдалил очередь {datetime.now().strftime("%d.%m.%Y %H:%M")}"
     remove_queue(username, chat_id, message_id, subjcet_id)
     await callback.message.delete()
     await callback.message.answer(text)
@@ -336,16 +336,43 @@ async def process_last_participant_click(callback: CallbackQuery):
     """Функция для отметки последнего участника в очереди,
     который успел сдать предмет
     """
+    # ПОменяться сообщение 
+    # Запомнить номера которые были у людей которые не успели, отметим со *
+    text = callback.message.text
+    splited_message = text[text.find("на") + 3:].split("\n")
+    # Забрал название предмета для кнопки, а также дату и время
+    message_subject, message_date, message_time = splited_message[0:3]
+    head = f"Список на {message_subject}\n{message_date}\n{message_time}\n\n"
 
-    pass
+    # Не забыть поставить с 5го в splited message, потому что 4 это тот кто поледний был
+    queue = [(int(i.split(".")[0]), i.split(".")[1].replace(" ", "")) for i in splited_message[4:]]  # [(позиция, tgname)]
+    save_position_not_pass(queue, get_subject_id(callback.message.chat.id, message_subject))
+    await callback.message.edit_text(head+"\n\n" +f"Очередь завершена последний был {"@" + callback.from_user.username}")
 
 
 @router.callback_query(F.data.in_(["add_last_user_in_queue"]))
 async def process_last_participant_click(callback: CallbackQuery):
     """Функция для добавления себя в конец уже сформированной очереди"""
-    # смотри схему в miro
-    pass
+    text = callback.message.text
+    splited_message = text[text.find("на") + 3:].split("\n")
+    # Забрал название предмета для кнопки, а также дату и время
+    message_subject= splited_message[0]
 
+    queue = [(int(i.split(".")[0]), i.split(".")[1].replace(" ", "")) for i in splited_message[4:]][-1]
+
+    add_people = f"{queue[0]+1}. @{callback.from_user.username}"
+
+    #Возможно стоит сделать проверку есть он или нет там
+    add_submission_attempt(
+            callback.from_user.username, 
+            get_subject_id(callback.message.chat.id, message_subject)
+                           )
+    
+    add_history_position(
+                    add_people, 
+                    get_subject_id(callback.message.chat.id, message_subject)
+                        )
+    await callback.message.edit_text(text+"\n"+add_people)
 
 # Этот хэндлер срабатывает на команду /changename
 @router.message(Command(commands='changename'))

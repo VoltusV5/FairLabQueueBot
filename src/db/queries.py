@@ -299,7 +299,9 @@ def add_history_position(queue: str, subject_id: int):
                                 ).first()
                     if people_history.history_position is None:
                         people_history.history_position = []
-
+                    if isinstance(people_history.history_position[-1], str):
+                        people_history.history_position[-1] = int(people_history.history_position[-1].replace("*", ""))
+                        
                     people_history.history_position.append(int(pos))
                     
                     flag_modified(people_history, "history_position")
@@ -329,5 +331,31 @@ def remove_queue(username:str, chat_id:int, message_id:int, subject_id:int):
         except Exception as e:
             print(e)
             logger.error("Ошибка при удалении всей очереди Queue в {chat_id}")
+
+
 def remove_subject():
     pass
+
+
+def save_position_not_pass(queue:list[tuple], subject_id):
+    """Функция которая пометит позиции людей, которые не успели сдать"""
+
+    with get_db() as db:
+        try:
+            for pos, tgname in queue:
+                people_history: SubmissionAttempt = db.query(SubmissionAttempt)\
+                    .filter(SubmissionAttempt.subject_id == subject_id, 
+                            SubmissionAttempt.tg_username == tgname
+                            ).first()
+                if people_history.history_position is None:
+                    people_history.history_position = []
+
+                people_history.history_position.append(str(pos)+"*")
+                flag_modified(people_history, "history_position")
+
+                db.commit()
+                logger.info(f"Закреплено место на следующий урок у {tgname}")
+                
+        except Exception as e:
+            print(e)
+            logger.error("Ошибка при отметки людей которые не успели сдать в {chat_id}")
