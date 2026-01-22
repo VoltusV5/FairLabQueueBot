@@ -301,7 +301,7 @@ def add_history_position(queue: str, subject_id: int):
                         people_history.history_position = []
                     if isinstance(people_history.history_position[-1], str):
                         people_history.history_position[-1] = int(people_history.history_position[-1].replace("*", ""))
-                        
+
                     people_history.history_position.append(int(pos))
                     
                     flag_modified(people_history, "history_position")
@@ -350,7 +350,7 @@ def save_position_not_pass(queue:list[tuple], subject_id):
                 if people_history.history_position is None:
                     people_history.history_position = []
 
-                people_history.history_position.append(str(pos)+"*")
+                people_history.history_position[-1] = str(pos)+"*"
                 flag_modified(people_history, "history_position")
 
                 db.commit()
