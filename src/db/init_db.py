@@ -43,6 +43,7 @@ class Queue(Base):
     """Для того, чтобы исключить лишние проверки добавляем правило, что
     Если subject_id, lesson_date, chat_id совпадают, то выдаём исключение
     Зачем?
+    Ну да, наверное, лишнее. Потому что в основном коде это уже обработано
     """
     __table_args__ = (
         UniqueConstraint("subject_id", "chat_id", "lesson_date",

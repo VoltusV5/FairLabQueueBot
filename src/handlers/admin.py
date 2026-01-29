@@ -54,13 +54,13 @@ btn_participate = [
 ]
 
 # Кнопки для подтверждения завершения очереди
-btn_confirm = [
+btn_confirm_close_queue = [
     InlineKeyboardButton(
         text="Да, завершить",
-        callback_data="really_close_queue"),
+        callback_data="close_queue_YES"),
     InlineKeyboardButton(
         text="Нет, отмена",
-        callback_data="back_to_queue")
+        callback_data="close_queue_NO")
 ]
 
 # Кнопка, чтобы отметиться последним сдавшим
@@ -73,11 +73,37 @@ btn_after_filling_queue = [
         callback_data="add_last_user_in_queue")
 ]
 
+# Кнопки для подтверждения удаления очереди
+btn_confirm_del_queue = [
+    InlineKeyboardButton(
+        text="Да, удалить",
+        callback_data="del_queue_YES"),
+    InlineKeyboardButton(
+        text="Нет, отмена",
+        callback_data="del_queue_NO")
+]
+
+# Кнопки для подтверждения того, что ты последний в очереди
+btn_confirm_last_participant = [
+    InlineKeyboardButton(
+        text="Да, я последний",
+        callback_data="last_participant_YES"),
+    InlineKeyboardButton(
+        text="Нет, отмена",
+        callback_data="last_participant_NO")
+]
+
 # Создаем объект инлайн-клавиатуры
 keyboard = InlineKeyboardMarkup(inline_keyboard=btn_participate)
 
 # Подгружаем Config
 config: Config = load_config()
+
+# Индекс 1ого пользователя в queue. Без служебной информации
+# ['"q28"', '📅 08.02.2025', '⏰ 14:30', '', '1. @VoltusV_GG', '2. @VoltusV']
+#                                                  ЧЕТЫРЕ
+FIRST_USER_IN_QUEUE_NUMBER = 4
+HEADER_LINES_COUNT = 3
 
 
 class QueueStatus(Enum):
@@ -127,8 +153,6 @@ async def process_queue_command(message: Message):
         subject_date_and_time = subject_date + ' ' + subject_time
         subject_id = get_subject_id(chat_id, subject_name)
         chat_id = message.chat.id
-        # Сделал костыль не уверен что всегда будет работать, тк разные айдишники у сообшений на 1 отличаются
-        message_id = message.message_id + 1
         lesson_date = datetime.strptime(
             subject_date_and_time, "%d.%m.%Y %H:%M")
         close_at = lesson_date - timedelta(hours=1)
@@ -142,17 +166,20 @@ async def process_queue_command(message: Message):
                 text=LEXICON_RU["/queue_error_message_UniqueConstraint"])
             return
 
-        # Создаём новую Queue в БД
-        add_new_queue(
-            subject_id, chat_id, message_id, lesson_date,
-            close_at, status.value, usernames)
-
         # Кидаем сообщение
-        await message.answer(
+        sent_message: Message = await message.answer(
             text=f"📘 Запись на {subject_name}\n"
                  f"📅 {subject_date}\n"
                  f"⏰ {subject_time}",
             reply_markup=keyboard)
+
+        real_message_id = sent_message.message_id
+
+        # Создаём новую Queue в БД
+        add_new_queue(
+            subject_id, chat_id, real_message_id, lesson_date,
+            close_at, status.value, usernames)
+
     except IntegrityError as error:
         # Сообщение пользователю об ошибке
         await message.answer(
@@ -179,6 +206,11 @@ async def process_buttons_click(callback: CallbackQuery):
     Или удаляем пользователя из очереди, если человек передумал,
     при нажатии ОТМЕНИТЬ УЧАСТИЕ
     """
+    if not isinstance(callback.message, Message):
+        await callback.answer("Сообщение недоступно или удалено",
+                              show_alert=False)
+        return
+
     action = "add" if callback.data == "confirm_participation" else "remove"
     user_not_in_db = ("Вы записаны ✅"
                       if action == "add" else "Вы и так не в очереди")
@@ -233,90 +265,75 @@ async def process_buttons_click(callback: CallbackQuery):
         raise ValueError(f"Ошибка при проверке пользователя {error}")
 
 
-@router.callback_query(F.data.in_(["close_queue"]))
-async def close_queue_start(callback: CallbackQuery):
-    """Досрочное завершение очереди подтверждение действия
-    Изменяет изначальное сообщение на сообщение с вопросом:
-    "хотите досрочно завершить очередь? ДА/НЕТ"
-    """
-    if not isinstance(callback.message, Message):
-        await callback.answer("Сообщение недоступно или удалено",
-                              show_alert=True)
-        return
-    await callback.message.edit_reply_markup(reply_markup=None)
-
-    text = callback.message.text or ""  # Если None, то делаем пустую строку
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_confirm])
-    await callback.message.edit_text(
-        text + "\n\n" + "Вы уверены, что хотите досрочно завершить очередь?",
-        reply_markup=keyboard
-    )
-
-
-@router.callback_query(F.data.in_(["back_to_queue"]))
-async def close_queue_discard(callback: CallbackQuery):
-    """Досрочное завершение очереди подтверждение действия
-    Обработка нажатия НЕТ. Отмена подтверждения закрытия очереди
+@router.callback_query(F.data.in_({"close_queue",
+                                   "close_queue_NO", "close_queue_YES"}))
+async def close_queue(callback: CallbackQuery):
+    """Досрочное завершение очереди
+    в match-case реализовано подтверждение действия
     """
     if not isinstance(callback.message, Message):
         await callback.answer("Сообщение недоступно или удалено",
                               show_alert=False)
         return
     await callback.message.edit_reply_markup(reply_markup=None)
-
     text = callback.message.text or ""  # Если None, то делаем пустую строку
-    splited_text = text.split("\n\n")
-    keyboard = InlineKeyboardMarkup(inline_keyboard=btn_participate)
-    await callback.message.edit_text(
-        splited_text[0],  # Только информация об очереди
-        reply_markup=keyboard
-    )
+
+    match callback.data:
+        # Нажатие на кнопку "Завершить очередь"
+        case "close_queue":
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[btn_confirm_close_queue])
+            await callback.message.edit_text(
+                (text + "\n\n" + "Вы уверены, что "
+                    "хотите досрочно завершить очередь?"),
+                reply_markup=keyboard
+            )
+        # Отмена завершения очереди в меню "Да/Нет"
+        case "close_queue_NO":
+            splited_text = text.split("\n\n")
+            keyboard = InlineKeyboardMarkup(inline_keyboard=btn_participate)
+            await callback.message.edit_text(
+                splited_text[0],  # Только информация об очереди
+                reply_markup=keyboard
+            )
+        # Подтверждение завершения очереди в меню "Да/Нет"
+        case "close_queue_YES":
+            # Разбил сообщение, чтобы сформировать сообщение с записанными
+            splited_message = text[text.find("на") + 3:].split("\n")
+            # Забрал название предмета для кнопки, а также дату и время
+            message_subject, message_date, message_time = splited_message[0:3]
+            head = (f"Список на {message_subject}\n"
+                    f"{message_date}\n{message_time}\n\n")
+            # Переменная с сообщением с финальной очередью
+            queue_head = head + get_queue(callback.message, message_subject)
+            # Переменная с финальной очередью для добавления в БД
+            queue = get_queue(callback.message, message_subject)
+            print(queue)
+            # Кнопка "Я последний" и "добавить себя в конец списка"
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[btn_after_filling_queue])
+
+            # Отправляем финальную очередь
+            await callback.message.edit_text(queue_head, reply_markup=keyboard)
+
+            positions = [i.split('.') for i in queue.split("\n")]
+            while [''] in positions:
+                positions.remove([''])
+
+            # Добавляем каждому участнику запись в историю записей
+            add_history_position(
+                positions,
+                get_subject_id(callback.message.chat.id, message_subject)
+            )
+
+            tg_username = callback.from_user.username
+            await callback.message.answer(
+                f"Пользователь @{tg_username} завершил очередь досрочно")
+            await callback.answer()
 
 
-@router.callback_query(F.data.in_(["really_close_queue"]))
-async def process_buttons_click(callback: CallbackQuery):
-    """Досрочное завершение очереди."""
-    # Убираем кнопки
-    if not isinstance(callback.message, Message):
-        await callback.answer("Сообщение недоступно или удалено",
-                              show_alert=True)
-        return
-    await callback.message.edit_reply_markup(reply_markup=None)
-    text = callback.message.text or ""
-
-    # Разбил сообщение, чтобы сформировать сообщение с записанными людьми
-    splited_message = text[text.find("на") + 3:].split("\n")
-    # Забрал название предмета для кнопки, а также дату и время
-    message_subject, message_date, message_time = splited_message[0:3]
-    head = f"Список на {message_subject}\n{message_date}\n{message_time}\n\n"
-    # Переменная с сообщением с финальной очередью
-    queue_head = head + get_queue(callback.message, message_subject)
-    # Переменная с финальной очередью для добавления в БД
-    queue = get_queue(callback.message, message_subject)
-    print(queue)
-    # Кнопка "Я последний" и "добавить себя в конец списка"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[btn_after_filling_queue])
-
-    # Отправляем финальную очередь
-    await callback.message.edit_text(queue_head, reply_markup=keyboard)
-
-    positions = [i.split('.') for i in queue.split("\n")]
-    while [''] in positions:
-        positions.remove([''])
-
-    # Добавляем каждому участнику запись о том, что он был в списке очередей
-    add_history_position(
-        positions,
-        get_subject_id(callback.message.chat.id, message_subject)
-    )
-
-    # tg_username = callback.from_user.username
-    # await callback.message.answer(
-    #     f"Пользователь @{tg_username} завершил очередь досрочно")
-    # await callback.answer()
-
-
-@router.callback_query(F.data.in_(["del_queue"]))
+@router.callback_query(F.data.in_({"del_queue",
+                                   "del_queue_YES", "del_queue_NO"}))
 async def process_del_queue_click(callback: CallbackQuery):
     """Функция для удаления очереди. Если создал запись на предмет,
     а потом понял, что она не нужна.
@@ -326,26 +343,51 @@ async def process_del_queue_click(callback: CallbackQuery):
         await callback.answer("Сообщение недоступно или удалено",
                               show_alert=True)
         return
-    username = "@" + callback.from_user.username
-    chat_id = callback.message.chat.id
-    message_id = callback.message.message_id
     text = callback.message.text or ""
-    # Разбил сообщение, чтобы сформировать сообщение с записанными людьми
-    splited_message = text[text.find("на") + 3:].split("\n")
-    # Забрал название, дату и время предмета
-    queue_subject, queue_date, queue_time = splited_message
-    # Очистил от эмодзи
-    queue_date, queue_time = queue_date[2:], queue_time[2:]
-    subjcet_id = get_subject_id(chat_id, queue_subject)
+    match callback.data:
+        # Нажатие на кнопку "Завершить очередь"
+        case "del_queue":
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[btn_confirm_del_queue])
+            await callback.message.edit_text(
+                (text + "\n\n" + "Вы уверены, что "
+                    "хотите удалить эту очередь?"),
+                reply_markup=keyboard
+            )
+        # Отмена удаления очереди в меню "Да/Нет"
+        case "del_queue_NO":
+            splited_text = text.split("\n\n")
+            keyboard = InlineKeyboardMarkup(inline_keyboard=btn_participate)
+            await callback.message.edit_text(
+                splited_text[0],  # Только информация об очереди
+                reply_markup=keyboard
+            )
+        # Подтверждение удаления очереди в меню "Да/Нет"
+        case "del_queue_YES":
+            if callback.from_user.username is None:
+                return
+            username = "@" + callback.from_user.username
+            chat_id = callback.message.chat.id
+            message_id = callback.message.message_id
+            # Разбил сообщение, чтобы сформировать сообщение с записанными
+            splited_message = text.split("\n")[:HEADER_LINES_COUNT]
+            # Забрал название, дату и время предмета
+            queue_subject, queue_date, queue_time = splited_message
+            # Очистил от эмодзи:
+            queue_subject = queue_subject[queue_subject.find("на") + 3:]
+            queue_date, queue_time = queue_date[2:], queue_time[2:]
+            subjcet_id = get_subject_id(chat_id, queue_subject)
 
-    text = (f"Пользователь @{callback.from_user.username}\n"
-            f"Удалил очередь на {queue_subject} {queue_date} {queue_time}")
-    remove_queue(username, chat_id, message_id, subjcet_id)
-    await callback.message.delete()
-    await callback.message.answer(text)
+            text = (f"Пользователь @{callback.from_user.username}\n"
+                    f"Удалил очередь на {queue_subject} "
+                    f"{queue_date} {queue_time}")
+            remove_queue(username, chat_id, message_id, subjcet_id)
+            await callback.message.delete()
+            await callback.message.answer(text)
 
 
-@router.callback_query(F.data.in_(["last_participant"]))
+@router.callback_query(F.data.in_({"last_participant", "last_participant_NO",
+                                   "last_participant_YES"}))
 async def process_last_participant_click(callback: CallbackQuery):
     """Функция для отметки последнего участника в очереди,
     который успел сдать предмет
@@ -359,25 +401,71 @@ async def process_last_participant_click(callback: CallbackQuery):
     text = callback.message.text
     if text is None:
         return
+    if callback.from_user.username is None:
+        return
 
-    splited_message = text[text.find("на") + 3:].split("\n")
-    # Забрал название предмета для кнопки, а также дату и время
-    queue_subject = splited_message[0]
+    match callback.data:
+        # Нажатие на кнопку "Завершить очередь"
+        case "last_participant":
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[btn_confirm_last_participant])
+            await callback.message.edit_text(
+                (text + "\n\n" + "Вы уверены, что "
+                    "вы последний?"),
+                reply_markup=keyboard
+            )
+        # Отмена удаления очереди в меню "Да/Нет"
+        case "last_participant_NO":
+            splited_text = text.split("\n\n")
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[btn_after_filling_queue])
+            # Только информация об очереди и очередь
+            return_message_text = '\n\n'.join(splited_text[:-1])
+            await callback.message.edit_text(
+                return_message_text,
+                reply_markup=keyboard
+            )
+        # Подтверждение удаления очереди в меню "Да/Нет"
+        case "last_participant_YES":
+            tgname = "@" + callback.from_user.username
 
-    # !!! с 5го в splited message, потому что 4 это тот кто поледний был
-    # [(позиция, tgname)] в splited_message[4:] ->  queue [(позиция, tgname)]
-    print(splited_message)
-    queue = [
-        (int(i.split(".")[0]), i.split(".")[1].replace(" ", ""))
-        for i in splited_message[4:]
-    ]
-    # Создаём пометку для людей, которые идут после последнего сдавшего
-    save_position_not_pass(queue, get_subject_id(
-        callback.message.chat.id, queue_subject))
+            # Возвращаем текст без "вы уверены, что вы последний?"
+            splited_text = text.split("\n\n")
+            return_message_text = '\n\n'.join(splited_text[:-1])
+            text = return_message_text
 
-    await callback.message.edit_text(
-        text + "\n\n" + f"Очередь завершена. "
-        f"Последним был @{callback.from_user.username}")
+            splited_message = text[text.find("на") + 3:].split("\n")
+            # Забрал название предмета для кнопки, а также дату и время
+            queue_subject = splited_message[0]
+
+            # int(i.split(".")[0] - номер в списке
+            # int(i.split(".")[1] - tg_username
+            print(splited_message)
+            queue = [
+                (int(i.split(".")[0]), i.split(".")[1].replace(" ", ""))
+                for i in splited_message[FIRST_USER_IN_QUEUE_NUMBER:]
+            ]
+            print(queue)
+            for queue_entry in queue:
+                queue_position, queue_username = queue_entry
+                print(queue_position, queue_username, tgname)
+                if queue_username == tgname:
+                    # Вычисляем номер человека после последного сдавшего
+                    queue = queue[FIRST_USER_IN_QUEUE_NUMBER + queue_position:]
+                    break
+            else:
+                await callback.answer("Вы не записаны в очередь!")
+                logging.info("Такой пользователь уже есть в текущей очереди")
+                return
+
+            if queue:
+                # Создаём пометку для людей, которые идут после последнего
+                save_position_not_pass(queue, get_subject_id(
+                    callback.message.chat.id, queue_subject))
+
+            await callback.message.edit_text(
+                text + "\n\n" + f"Очередь завершена. "
+                f"Последним был @{callback.from_user.username}")
 
 
 @router.callback_query(F.data.in_(["add_last_user_in_queue"]))
@@ -410,7 +498,8 @@ async def add_last_user_in_queue(callback: CallbackQuery):
             logging.info("Такой пользователь уже есть в текущей очереди")
             return
     else:
-        position_for_new_user = queue[-1][0] + 1
+        position_for_new_user = queue[-1][0] + 1 if queue else 1
+
         add_people = [(position_for_new_user, tgname)]
 
         # Добавить проверку есть ли он уже в очереди
@@ -423,8 +512,16 @@ async def add_last_user_in_queue(callback: CallbackQuery):
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[btn_after_filling_queue])
 
-        await callback.message.edit_text(f'{text}\n{position_for_new_user}. '
-                                         f'{tgname}', reply_markup=keyboard)
+        # Если в очереди никого нет, то поставить дополнительный \n
+        # Чтобы отделить служебную информацию от очереди
+        if position_for_new_user == 1:
+            await callback.message.edit_text(
+                f'{text}\n\n{position_for_new_user}. '
+                f'{tgname}', reply_markup=keyboard)
+        else:
+            await callback.message.edit_text(
+                f'{text}\n{position_for_new_user}. '
+                f'{tgname}', reply_markup=keyboard)
 
 
 # Этот хэндлер срабатывает на команду /changename
