@@ -236,19 +236,22 @@ def change_realname(tg_username: str, new_realname: str):
             f"Ошибка при изменении realname: {error}")
 
 
-
-def remove_tgname_in_queue(tg_username: str, message_id: int, subject_id: int, chat_id: int):
+def remove_tgname_in_queue(
+        tg_username: str, message_id: int, subject_id: int, chat_id: int):
     """Функция для удаления пользователя из записи на предмет
     Обновляет Queue
     """
-    
     with get_db() as db:
         # убираем из списка очереди
         try:
-            queue:Queue = db.query(Queue).filter(
-                Queue.chat_id==chat_id, 
-                Queue.message_id == message_id, 
-                Queue.subject_id==subject_id).first()
+            queue: Queue = db.query(Queue).filter(
+                Queue.chat_id == chat_id,
+                Queue.message_id == message_id,
+                Queue.subject_id == subject_id).first()
+
+            if tg_username not in queue.usernames:
+                return
+
             index = queue.usernames.index(tg_username)
             del queue.usernames[index]
 
@@ -256,75 +259,84 @@ def remove_tgname_in_queue(tg_username: str, message_id: int, subject_id: int, c
             db.commit()
             logger.info(f"Удален из списка очереди "
                         f"tg_username в usernames: {tg_username}")
-            return 0
+            return -1
         except Exception as e:
             db.rollback()
-            logger.error(f"Ошибка при удалении из Queue")
+            logger.error("Ошибка при удалении из Queue")
             print(e)
 
 
-
-
-def add_submission_attempt(tgname, subject_id):
-    tgname = "@" + tgname 
-    tgname = tgname.replace(" ", "")
+def add_submission_attempt(tgname: str, subject_id: int):
+    """Если у пользователя не было записи в Submission Attempt
+    Создаёт ему такую запись
+    """
     with get_db() as db:
         try:
-            if db.query(SubmissionAttempt).filter(SubmissionAttempt.subject_id==subject_id, SubmissionAttempt.tg_username==tgname).first() is None:
-                new_attempt = SubmissionAttempt(tg_username=tgname, subject_id=subject_id, history_position=[])
+            if db.query(SubmissionAttempt).filter(
+                    SubmissionAttempt.subject_id == subject_id,
+                    SubmissionAttempt.tg_username == tgname).first() is None:
+                new_attempt = SubmissionAttempt(
+                    tg_username=tgname, subject_id=subject_id,
+                    history_position=[])
                 db.add(new_attempt)
                 db.commit()
                 db.refresh(new_attempt)
         except Exception as e:
             db.rollback()
-            logger.error(f"Ошибка при добавлении в SubmisiionAttempt")
+            logger.error("Ошибка при добавлении в SubmisiionAttempt")
             print(e)
 
 
-def add_history_position(queue: str, subject_id: int):
+def add_history_position(queue: list[tuple], subject_id: int):
     """
     Функция для добавления позиции пользователя в историю позиций
     chat_id и subject_name для того чтобы достать subject_id
     """
-    positions = [i.split('.') for i in queue.split("\n")]    #Запись выглядит так чуть поменять кое что [["1", "tgname1"], ["2", "tgname2"]] , на айди потом изи свапнуть
-    print(positions)
+    # Запись выглядит так чуть поменять кое что
+    # [["1", "tgname1"], ["2", "tgname2"]] , на айди потом изи свапнуть
     with get_db() as db:
         try:
-                for pos, tgname in positions:
-                    tgname = tgname.replace(" ", "")
+            for pos, tgname in queue:
+                tgname = "@" + tgname.replace(" ", "")
 
-                    people_history: SubmissionAttempt = db.query(SubmissionAttempt)\
-                        .filter(SubmissionAttempt.subject_id == subject_id, 
-                                SubmissionAttempt.tg_username == tgname
-                                ).first()
-                    if people_history.history_position is None:
-                        people_history.history_position = []
-                    if isinstance(people_history.history_position[-1], str):
-                        people_history.history_position[-1] = int(people_history.history_position[-1].replace("*", ""))
+                add_submission_attempt(tgname, subject_id)
+
+                people_history: SubmissionAttempt = (
+                    db.query(SubmissionAttempt)
+                    .filter(SubmissionAttempt.subject_id == subject_id,
+                            SubmissionAttempt.tg_username == tgname
+                            ).first())
+                if people_history.history_position in [None, []]:
+                    people_history.history_position = [int(pos)]
+                else:
+                    people_history.history_position[-1] = (
+                        int(people_history.history_position[-1]
+                            .replace("*", "")))
 
                     people_history.history_position.append(int(pos))
-                    
-                    flag_modified(people_history, "history_position")
 
+                    flag_modified(people_history, "history_position")
                     db.commit()
                     logger.info(f"Обновлена история позиций у {tgname}")
         except Exception as e:
-            #Если пользователь один в списке то лог выдаёт ошибку т.к. при split в position будет [[1, "@tg"], ['']], 
+            # Если пользователь один в списке то лог выдаёт ошибку
+            # т.к. при split в position будет [[1, "@tg"], ['']],
             # и пустая вызовёт ошибку но она ни на что не влияет
 
             db.rollback()
-            logger.error(f"Ошибка при обновлении списка позиций")
+            logger.error("Ошибка при обновлении списка позиций")
             print(e)
 
-def remove_queue(username:str, chat_id:int, message_id:int, subject_id:int):
-    """Полное удаление Queue строки"""
 
+def remove_queue(
+        username: str, chat_id: int, message_id: int, subject_id: int):
+    """Полное удаление Queue строки"""
     with get_db() as db:
         try:
             stm = delete(Queue).where(
-                Queue.message_id==message_id,
-                Queue.chat_id==chat_id,
-                Queue.subject_id==subject_id)
+                Queue.message_id == message_id,
+                Queue.chat_id == chat_id,
+                Queue.subject_id == subject_id)
             db.execute(stm)
             db.commit()
             logger.info("Успешное удаление Queue в {chat_id}")
@@ -333,29 +345,27 @@ def remove_queue(username:str, chat_id:int, message_id:int, subject_id:int):
             logger.error("Ошибка при удалении всей очереди Queue в {chat_id}")
 
 
-def remove_subject():
-    pass
-
-
-def save_position_not_pass(queue:list[tuple], subject_id):
+def save_position_not_pass(queue: list[tuple], subject_id):
     """Функция которая пометит позиции людей, которые не успели сдать"""
-
     with get_db() as db:
         try:
             for pos, tgname in queue:
-                people_history: SubmissionAttempt = db.query(SubmissionAttempt)\
-                    .filter(SubmissionAttempt.subject_id == subject_id, 
-                            SubmissionAttempt.tg_username == tgname
-                            ).first()
-                if people_history.history_position is None:
-                    people_history.history_position = []
+                people_history: SubmissionAttempt = db.query(
+                    SubmissionAttempt).filter(
+                        SubmissionAttempt.subject_id == subject_id,
+                        SubmissionAttempt.tg_username == tgname
+                ).first()
 
-                people_history.history_position[-1] = str(pos)+"*"
-                flag_modified(people_history, "history_position")
+                if people_history.history_position in [None, []]:
+                    people_history.history_position = [str(pos) + "*"]
+                else:
+                    people_history.history_position[-1] = str(pos) + "*"
+                    flag_modified(people_history, "history_position")
 
-                db.commit()
-                logger.info(f"Закреплено место на следующий урок у {tgname}")
-                
+                    db.commit()
+                    logger.info(
+                        f"Закреплено место на следующий урок у {tgname}")
+
         except Exception as e:
             print(e)
-            logger.error("Ошибка при отметки людей которые не успели сдать в {chat_id}")
+            logger.error("Ошибка при отметке людей которые не успели сдать")
