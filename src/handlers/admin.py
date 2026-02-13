@@ -3,7 +3,7 @@
 создание и закрытие очередей, перемешивание, сброс статистики, экспорт данных.
 """
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     InlineKeyboardButton,
@@ -11,22 +11,27 @@ from aiogram.types import (
     Message,
     CallbackQuery,
 )
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from ..db.db import get_db
 from ..db.queries import (
     add_user_to_db, add_new_queue, add_new_subject, is_in_db,
     split_queue_command_message, get_subject_id, get_user, is_queue_in_db,
     change_realname, add_tgname_in_queue, add_history_position,
     remove_tgname_in_queue,
-    remove_queue, save_position_not_pass
+    remove_queue, save_position_not_pass,add_pay
 
 )
 
-from ..db.init_db import User, Subject, Queue
+from ..db.init_db import User, Subject, Queue, Pay
 from src.services.queue_manager import get_queue
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta
 from enum import Enum
 from config import Config, load_config
+from dotenv import load_dotenv
+from yookassa import Configuration, Payment
+import os
+import uuid
 
 import logging
 from src.lexicon import LEXICON_RU
@@ -93,6 +98,17 @@ btn_confirm_last_participant = [
         callback_data="last_participant_NO")
 ]
 
+btn_choose_pay = [
+    InlineKeyboardButton(
+        text="Базовая подписка",
+        callback_data="base_pay"
+    ),
+    InlineKeyboardButton(
+        text="SuperVIP",
+        callback_data="super_vip_pay"
+    )
+]
+
 # Создаем объект инлайн-клавиатуры
 keyboard = InlineKeyboardMarkup(inline_keyboard=btn_participate)
 
@@ -105,6 +121,9 @@ config: Config = load_config()
 FIRST_USER_IN_QUEUE_NUMBER = 4
 HEADER_LINES_COUNT = 3
 
+load_dotenv()
+Configuration.account_id = os.getenv('YOOKASSA_SHOP_ID')
+Configuration.secret_key = os.getenv('YOOKASSA_SECRET_KEY')
 
 class QueueStatus(Enum):
     """Статусы для состояний Queue"""
@@ -542,3 +561,160 @@ async def process_changename_command(message: Message):
     except Exception as error:
         logger.error(f"Ошибка при смене realname {error}")
         raise ValueError(f"Ошибка при смене realname {error}")
+
+
+#Покупка подписки
+@router.message(Command(commands="sub"))
+async def pay_information(message: Message):
+    """Показать информацию о подписке"""
+    keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[btn_choose_pay]
+                )
+    await message.answer(
+        "🎁 *Оформление подписки*\n\n"
+        "Выбери тариф:\n\n"
+        "🔥 *Базовая подписка* — 200₽/год\n"
+        "⭐️ *SuperVIP* — 300₽/год\n",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data.endswith("_pay"))
+async def add_last_user_in_queue(callback: CallbackQuery):
+    """Создание платежа Юкасса"""
+    await callback.answer("⏳ Создаем счет...")
+
+    if callback.data == "base_pay":
+        amount = "200.00"
+        description = "Базовая подписка на год"
+        days = 365
+    elif callback.data == "super_vip_pay":
+        amount = "300.00"
+        description = "SuperVip подписка на год"
+        days = 365
+    else:
+        return
+    
+
+    try:
+        idempotence_key = str(uuid.uuid4())
+        payment = Payment.create({
+            "amount": {
+                "value": amount,
+                "currency": "RUB"
+            },
+            "confirmation": {
+                "type": "redirect",
+                "return_url": "https://t.me/" + "Queueueue_1bot"
+            },
+            "capture": True,
+            "description": f"{description} | User: {callback.from_user.id}",
+            "metadata": {
+                "user_id": str(callback.from_user.id),
+                "tariff": callback.data,
+                "days": days
+            }
+        }, idempotence_key)
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="💳 Оплатить сейчас", url=payment.confirmation.confirmation_url)
+        builder.button(text="✅ Проверить оплату", callback_data=f"check_{payment.id}")
+        builder.button(text="🔙 Назад к тарифам", callback_data="back_to_sub")
+        builder.adjust(1)
+
+        await callback.message.edit_text(
+            f"💰 *Счет на оплату*\n\n"
+            f"Тариф: *{description}*\n"
+            f"Сумма: *{amount}₽*\n\n"
+            f"1. Нажми кнопку «Оплатить сейчас»\n"
+            f"2. Оплати картой или СБП\n"
+            f"3. Вернись и нажми «Проверить оплату»\n\n"
+            f"🆔 Платеж: `{payment.id[:8]}...`",
+            parse_mode="Markdown",
+            reply_markup=builder.as_markup()
+        )
+        
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при создании платежа:\n`{str(e)}`\n\n"
+            "Попробуй позже или напиши в поддержку.",
+            parse_mode="Markdown"
+        )
+
+
+
+@router.callback_query(F.data == "back_to_sub")
+async def back_to_sub(callback: CallbackQuery):
+    """Вернуться к выбору тарифа"""
+    await pay_information(callback.message)
+
+
+
+@router.callback_query(F.data.startswith("check_"))
+async def check_payment(callback: CallbackQuery):
+    """Проверка статуса платежа"""
+
+    payment_id = callback.data.replace("check_", "")
+    
+    try:
+        # Запрашиваем статус у ЮKassa
+        payment = Payment.find_one(payment_id)
+        
+        if payment.status == 'succeeded':
+            
+            
+            user_id = callback.from_user.id
+            type_pay = str(payment.description)[:str(payment.description).find("|")]
+            add_pay(user_id, payment_id, type_pay)
+            
+            # Кнопки после успешной оплаты
+            builder = InlineKeyboardBuilder()
+
+            builder.button(text="Главное меню", callback_data="help")
+            builder.adjust(1)
+            if "Базовая" in str(payment.description):
+                await callback.message.edit_text(
+                    "✅ *Оплата прошла успешно!*\n\n"
+                    f"🎉 Спасибо за покупку!\n"
+                    f"Твой тариф: *Базовый*\n"
+                    f"Статус: Оплачен\n\n"
+                    "Нажми кнопку ниже, чтобы получить доступ к закрытому контенту.",
+                    parse_mode="Markdown",
+                    reply_markup=builder.as_markup()
+                )
+            else:
+                await callback.message.edit_text(
+                    "✅ *Оплата прошла успешно!*\n\n"
+                    f"🎉 Спасибо за покупку!\n"
+                    f"Твой тариф: *SuperVip*\n"
+                    f"Статус: Оплачен\n\n"
+                    "Нажми кнопку ниже, чтобы получить доступ к закрытому контенту.",
+                    parse_mode="Markdown",
+                    reply_markup=builder.as_markup()
+                )
+            
+        elif payment.status == 'pending':
+            await callback.answer(
+                "⏳ Платеж обрабатывается...\n"
+                "Обычно это занимает 1-2 минуты.\n"
+                "Попробуй еще раз через минуту.",
+                show_alert=True
+            )
+
+        else:
+            await callback.answer(
+                f"❌ Статус платежа: {payment.status}\n"
+                "Если ты оплатил, но статус не меняется - \n"
+                "напиши в поддержку.",
+                show_alert=True
+            )
+            
+    except Exception as e:
+        await callback.answer(f"Ошибка проверки: {str(e)[:50]}...", show_alert=True)
+
+
+@router.callback_query(F.data == "help")
+async def help_two(callback: CallbackQuery):
+    """Выводит информацию о командах бота, доступных админу."""
+    await callback.answer(text=LEXICON_RU['/help'])

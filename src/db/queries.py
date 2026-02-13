@@ -2,12 +2,13 @@
 
 import logging
 from ..db.db import get_db
-from ..db.init_db import User, Subject, Queue, SubmissionAttempt
+from ..db.init_db import User, Subject, Queue, SubmissionAttempt, Pay
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, delete
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from dateutil.relativedelta import relativedelta
 
 # Импортируем логгер
 logger = logging.getLogger(__name__)
@@ -369,3 +370,36 @@ def save_position_not_pass(queue: list[tuple], subject_id):
         except Exception as e:
             print(e)
             logger.error("Ошибка при отметке людей которые не успели сдать")
+
+
+def add_pay(user_id, id_pay, type_pay):
+    """добавление в pay"""
+    with get_db() as db:
+        try:
+            pay_obj: Pay = db.query(
+                    Pay).filter(
+                        Pay.id_pay == id_pay,
+                ).first()
+            
+            if pay_obj is None:
+                new_pay_obj = Pay(
+                    user_id=user_id, 
+                    id_pay=id_pay, 
+                    status=True, 
+                    type_pay=type_pay,
+                    date_pay=datetime.now(),
+                    date_end = datetime.now() + relativedelta(years=1)
+                    ) #корректно обрабатывает высокостный год
+                db.add(new_pay_obj)
+                
+            
+            db.commit()
+            logger.info(
+                f"Успешная оплата пользователем {user_id}")
+
+        except Exception as e:
+            db.rollback()
+            print(e)
+            logger.error("Ошибка при обновлении данных оплаты")
+
+

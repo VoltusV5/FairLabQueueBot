@@ -88,6 +88,8 @@ class Pay(Base):
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    id_pay: Mapped[int] = mapped_column(Integer)
     status: Mapped[bool] = mapped_column(Boolean)
+    type_pay: Mapped[str] = mapped_column(String)
     date_pay: Mapped[datetime] = mapped_column(DateTime)
     date_end: Mapped[datetime] = mapped_column(DateTime)
