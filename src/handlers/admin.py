@@ -606,7 +606,7 @@ async def add_last_user_in_queue(callback: CallbackQuery):
             },
             "confirmation": {
                 "type": "redirect",
-                "return_url": "https://t.me/" + "Queueueue_1bot"
+                "return_url": "https://t.me/" + "FairLabQueueBot"
             },
             "capture": True,
             "description": f"{description} | User: {callback.from_user.id}",
