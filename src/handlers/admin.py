@@ -17,7 +17,7 @@ from ..db.queries import (
     split_queue_command_message, get_subject_id, get_user, is_queue_in_db,
     change_realname, add_tgname_in_queue, add_history_position,
     remove_tgname_in_queue,
-    remove_queue, save_position_not_pass
+    remove_queue, save_position_not_pass, get_realname
 
 )
 
@@ -169,8 +169,8 @@ async def process_queue_command(message: Message):
         # Кидаем сообщение
         sent_message: Message = await message.answer(
             text=f"📘 Запись на {subject_name}\n"
-                 f"📅 {subject_date}\n"
-                 f"⏰ {subject_time}",
+            f"📅 {subject_date}\n"
+            f"⏰ {subject_time}",
             reply_markup=keyboard)
 
         real_message_id = sent_message.message_id
@@ -304,11 +304,12 @@ async def close_queue(callback: CallbackQuery):
             message_subject, message_date, message_time = splited_message[0:3]
             head = (f"Список на {message_subject}\n"
                     f"{message_date}\n{message_time}\n\n")
-            # Переменная с сообщением с финальной очередью
-            queue_head = head + get_queue(callback.message, message_subject)
-            # Переменная с финальной очередью для добавления в БД
+
+            # Переменная с финальной очередью
             queue = get_queue(callback.message, message_subject)
-            print(queue)
+            # Полное сообщение с финальной очередью
+            queue_head = head + queue
+
             # Кнопка "Я последний" и "добавить себя в конец списка"
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[btn_after_filling_queue])
@@ -316,20 +317,9 @@ async def close_queue(callback: CallbackQuery):
             # Отправляем финальную очередь
             await callback.message.edit_text(queue_head, reply_markup=keyboard)
 
-            positions = [i.split('.') for i in queue.split("\n")]
-            while [''] in positions:
-                positions.remove([''])
-
-            # Добавляем каждому участнику запись в историю записей
-            add_history_position(
-                positions,
-                get_subject_id(callback.message.chat.id, message_subject)
-            )
-
             tg_username = callback.from_user.username
             await callback.message.answer(
                 f"Пользователь @{tg_username} завершил очередь досрочно")
-            await callback.answer()
 
 
 @router.callback_query(F.data.in_({"del_queue",
@@ -441,17 +431,18 @@ async def process_last_participant_click(callback: CallbackQuery):
             # int(i.split(".")[0] - номер в списке
             # int(i.split(".")[1] - tg_username
             print(splited_message)
-            queue = [
-                (int(i.split(".")[0]), i.split(".")[1].replace(" ", ""))
+            queue: list[tuple[int, str]] = [
+                (int(i.split(".")[0]),
+                 i.split(" ")[-1].replace("(", "").replace(")", ""))
                 for i in splited_message[FIRST_USER_IN_QUEUE_NUMBER:]
             ]
             print(queue)
             for queue_entry in queue:
                 queue_position, queue_username = queue_entry
-                print(queue_position, queue_username, tgname)
+                print(queue_position, queue_username)
                 if queue_username == tgname:
                     # Вычисляем номер человека после последного сдавшего
-                    queue = queue[FIRST_USER_IN_QUEUE_NUMBER + queue_position:]
+                    queue = queue[queue_position:]
                     break
             else:
                 await callback.answer("Вы не записаны в очередь!")
@@ -488,8 +479,9 @@ async def add_last_user_in_queue(callback: CallbackQuery):
     message_subject = splited_message[0]
 
     queue: list[tuple[int, str]] = [
-        (int(i.split(".")[0]), i.split(".")[1].replace(" ", ""))
-        for i in splited_message[4:]
+        (int(i.split(".")[0]),
+         i.split(" ")[-1].replace("(", "").replace(")", ""))
+        for i in splited_message[FIRST_USER_IN_QUEUE_NUMBER:]
     ]
     for queue_entry in queue:
         queue_entry_username = queue_entry[1]
@@ -500,6 +492,17 @@ async def add_last_user_in_queue(callback: CallbackQuery):
     else:
         position_for_new_user = queue[-1][0] + 1 if queue else 1
 
+        # Переменные для БД
+        user_id = callback.from_user.id
+
+        # Если пользователя ещё нет в БД - добавить его
+        tg_username = tgname[1:]
+        if not is_in_db(user_id, User, "user_id"):
+            real_name = callback.from_user.full_name
+            chat_id = callback.message.chat.id
+            add_user_to_db(tg_username, chat_id, user_id, real_name)
+            logger.info("Пользователь добавлен в БД")
+
         add_people = [(position_for_new_user, tgname)]
 
         # Добавить проверку есть ли он уже в очереди
@@ -507,6 +510,7 @@ async def add_last_user_in_queue(callback: CallbackQuery):
             add_people,
             get_subject_id(callback.message.chat.id, message_subject)
         )
+        add_tgname_in_queue(tg_username, callback.message.message_id)
 
         # Кнопка "Я последний" и "добавить себя в конец списка"
         keyboard = InlineKeyboardMarkup(
@@ -514,14 +518,15 @@ async def add_last_user_in_queue(callback: CallbackQuery):
 
         # Если в очереди никого нет, то поставить дополнительный \n
         # Чтобы отделить служебную информацию от очереди
+        realname = get_realname(tgname)
         if position_for_new_user == 1:
             await callback.message.edit_text(
                 f'{text}\n\n{position_for_new_user}. '
-                f'{tgname}', reply_markup=keyboard)
+                f'{realname} ({tgname})', reply_markup=keyboard)
         else:
             await callback.message.edit_text(
                 f'{text}\n{position_for_new_user}. '
-                f'{tgname}', reply_markup=keyboard)
+                f'{realname} ({tgname})', reply_markup=keyboard)
 
 
 # Этот хэндлер срабатывает на команду /changename

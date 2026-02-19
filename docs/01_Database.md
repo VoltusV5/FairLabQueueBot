@@ -39,6 +39,7 @@ erDiagram
         str tg_username FK
         int subject_id FK
         JSON history_position
+        int missed_attempts_count
     }
     PAY {
         int id PK

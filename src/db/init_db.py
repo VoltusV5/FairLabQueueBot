@@ -40,11 +40,6 @@ class Queue(Base):
     status: Mapped[str] = mapped_column(String)
     usernames: Mapped[list] = mapped_column(JSON)
 
-    """Для того, чтобы исключить лишние проверки добавляем правило, что
-    Если subject_id, lesson_date, chat_id совпадают, то выдаём исключение
-    Зачем?
-    Ну да, наверное, лишнее. Потому что в основном коде это уже обработано
-    """
     __table_args__ = (
         UniqueConstraint("subject_id", "chat_id", "lesson_date",
                          name="unique_subject_chat_lesson"),
@@ -62,7 +57,7 @@ class User(Base):
         String, unique=True, nullable=False)
     user_id: Mapped[int] = mapped_column(
         Integer, unique=True, nullable=False)
-    real_name: Mapped[str] = mapped_column(String, unique=True, nullable=True)
+    real_name: Mapped[str] = mapped_column(String, unique=False, nullable=True)
     is_admin: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False)
     chat_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -78,6 +73,12 @@ class SubmissionAttempt(Base):
     tg_username: Mapped[str] = mapped_column(ForeignKey("users.tg_username"))
     subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id"))
     history_position: Mapped[list] = mapped_column(JSON)
+    missed_attempts_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0"
+    )
 
 
 class Pay(Base):
