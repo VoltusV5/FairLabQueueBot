@@ -1,84 +1,102 @@
 """
-Бизнес-логика очередей:
-добавление/удаление участников, сортировка, рандомизация,
-формирование финальной очереди.
+Формирование порядка очереди по tg_id и истории попыток.
 """
 
-# from aiogram import Bot, Dispatcher
-from aiogram import Router
-from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
-from ..db.init_db import Queue, Subject, SubmissionAttempt
-from ..db.db import get_db2
-from ..db.queries import (get_realname)
-import logging
+from __future__ import annotations
+
 from random import randint
 
+from sqlalchemy.orm import Session
 
-def get_queue(ms: Message, command: CommandObject | str):
-    """Формирование финальной очереди"""
-    db = get_db2()
+from ..db import queries as Q
 
-    # получение пользователей из списка
-    peoples = db.query(Queue).filter(
-        Queue.message_id == ms.message_id).first().usernames
-    peoples = ["@" + people for people in peoples]
-    print("peoples", peoples)
-    queue = []
 
-    # получение учебного предмета
-    subject = (
-        db.query(Subject)
-        .filter(Subject.subject_name == command,  # Чё то придумать с command, при нажатии на кнопку проблемно достать предмет, туда бы message_id
-                Subject.chat_id == ms.chat.id)
-        .first()
-    )
-    if not subject:
-        """Найден ли предмет"""
-        return -1
+def order_tg_ids(db: Session, participant_tg_ids: list[int], subject_id: int, chat_id: int | None = None) -> list[int]:
+    """
+    Порядок в финальной очереди:
+    1. Группы: если участники в одной группе, они идут блоком.
+       Приоритет группы = среднее (approaches) её участников.
+    2. Внутри группы или для одиночек:
+       - Меньше подходов (approaches)
+       - Больше пропусков (missed)
+       - Больше средняя позиция (avg_pos)
+       - Рандом
+    """
+    unique_ids = list(dict.fromkeys(participant_tg_ids))
+    
+    # Загружаем данные участников
+    user_data = {}
+    for uid in unique_ids:
+        row = Q.ensure_submission_row(db, uid, subject_id)
+        hp = row.history_position or []
+        user_data[uid] = {
+            "approaches": len(hp),
+            "missed": row.missed_attempts_count or 0,
+            "avg_pos": sum(int(x) for x in hp) / len(hp) if hp else 0.0,
+            "tie": randint(0, 100_000)
+        }
 
-    # Заполняем queue кортежами (человек, попытки сдачи,
-    # сколько раз не успел, среднее место, рандомное число).
-    for people in peoples:
-        temp = db.query(SubmissionAttempt)\
-            .filter(SubmissionAttempt.tg_username == people,
-                    SubmissionAttempt.subject_id == subject.id)\
-            .first()
-        if temp is None:
-            temp = SubmissionAttempt(
-                tg_username=people,
-                subject_id=subject.id,
-                history_position=[],
-                missed_attempts_count=0
-            )
-            db.add(temp)
-            db.commit()
-        history = temp.history_position
-        missed = temp.missed_attempts_count
-        avg = sum([int(pos) for pos in history]) / len(history) if history else 0.0
-        queue.append((people, history, missed, avg, randint(0, 100000)))
+    # Группы чата
+    groups = []
+    if chat_id:
+        chat = Q.get_chat(db, chat_id)
+        if chat and chat.groups:
+            groups = chat.groups
 
-    queue.sort(key=lambda x: (len(x[1]), -x[2], -x[3], x[4]))
-    print("queue", queue)
+    # Определяем, кто в какой группе (только те, кто записался)
+    assigned_uids = set()
+    blocks = [] # Список (priority_tuple, [uids])
+    
+    for g in groups:
+        members = [uid for uid in g if uid in unique_ids]
+        if not members:
+            continue
+        # Приоритет группы = среднее число подходов
+        g_approaches = sum(user_data[m]["approaches"] for m in members) / len(members)
+        # Для сортировки блоков используем тот же принцип
+        # (g_approaches, -g_missed, ...) - но упростим до подходов
+        blocks.append(((g_approaches, -1, 0, 0), members))
+        assigned_uids.update(members)
+    
+    # Одиночки
+    for uid in unique_ids:
+        if uid not in assigned_uids:
+            d = user_data[uid]
+            blocks.append(((d["approaches"], -d["missed"], -d["avg_pos"], d["tie"]), [uid]))
+            
+    # Сортируем блоки
+    blocks.sort(key=lambda x: x[0])
+    
+    # Собираем финальный список
+    final_order = []
+    for _, uids in blocks:
+        # Внутри группы или для одиночки (блок из 1) сохраняем порядок
+        # Но если это группа, внутри неё тоже можно отсортировать по личным заслугам,
+        # чтобы внутри блока был порядок по подходам/пропускам.
+        if len(uids) > 1:
+            uids.sort(key=lambda u: (user_data[u]["approaches"], -user_data[u]["missed"], -user_data[u]["avg_pos"], user_data[u]["tie"]))
+        final_order.extend(uids)
+        
+    return final_order
 
-    # Добавляем текущую позицию в БД
-    for idx, user in enumerate(queue):
-        username, user_positions, cnt_missed, average_pos, random_digit = user
-        temp = db.query(SubmissionAttempt)\
-            .filter(SubmissionAttempt.tg_username == username,
-                    SubmissionAttempt.subject_id == subject.id)\
-            .first()
-        temp.history_position = temp.history_position + [str(idx + 1)]
-    db.commit()
 
-    # Составляем строку для ТГ сообщения с очередью
-    spisok = ''
-    for idx, queue_element in enumerate(queue):
+def format_queue_lines(
+    db: Session, ordered_tg_ids: list[int | str], refused_slot_indices: set[int]
+) -> str:
+    lines = []
+    for idx, entry in enumerate(ordered_tg_ids):
+        if isinstance(entry, int):
+            label = Q.get_user_display(db, entry)
+        else:
+            # Временный участник (строка)
+            label = str(entry)
+        # Экранируем спецсимволы HTML
+        label = label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        suffix = " (отказался от участия в очереди)" if idx in refused_slot_indices else ""
+        lines.append(f"{idx + 1}. {label}{suffix}")
+    return "\n".join(lines) + ("\n" if lines else "")
 
-        queue_element_tgname = queue_element[0]
-        queue_element_realname = get_realname(queue_element_tgname)
-        spisok += (f'{idx + 1}. '
-                   f'{queue_element_realname} '
-                   f'({queue_element_tgname})\n')
 
-    return spisok
+def append_formation_history(db: Session, ordered_tg_ids: list[int], subject_id: int) -> None:
+    """Записать позиции текущего формирования в историю."""
+    Q.add_history_positions(db, ordered_tg_ids, subject_id)

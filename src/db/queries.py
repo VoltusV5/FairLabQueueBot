@@ -1,372 +1,717 @@
-"""SQL-запросы. Все функции для БД"""
+"""Работа с БД: пользователи (tg_id), чаты, очереди."""
+
+from __future__ import annotations
 
 import logging
-from ..db.db import get_db
-from ..db.init_db import User, Subject, Queue, SubmissionAttempt
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import func, delete
 from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
+from dateutil.relativedelta import relativedelta
 
-# Импортируем логгер
+from sqlalchemy import delete, func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
+from .db import get_db
+from .init_db import (
+    Chat,
+    PaymentRecord,
+    PresencePoll,
+    Queue,
+    Subject,
+    SubmissionAttempt,
+    SwapRequest,
+    User,
+)
+
 logger = logging.getLogger(__name__)
 
+TRIAL_DAYS = 30
 
-def is_in_db(user_data: str, bd_model: type, column_name: str) -> bool:
-    """Функция для проверки существования записи в выбранной db.
-    Вводится название пользователя/предмета и таблица, в которой это ищем
+
+def ensure_user(
+    db: Session, tg_id: int, tg_username: str | None, real_name: str | None
+) -> User:
+    u = db.query(User).filter(User.tg_id == tg_id).first()
+    if u is None:
+        u = User(tg_id=tg_id, tg_username=tg_username, real_name=real_name)
+        db.add(u)
+        db.commit()
+        db.refresh(u)
+        return u
+    changed = False
+    if tg_username is not None and u.tg_username != tg_username:
+        u.tg_username = tg_username
+        changed = True
+    if real_name is not None and u.real_name != real_name:
+        u.real_name = real_name
+        changed = True
+    if changed:
+        db.commit()
+        db.refresh(u)
+    return u
+
+
+def ensure_chat(db: Session, chat_id: int, title: str | None = None) -> Chat:
+    c = db.query(Chat).filter(Chat.chat_id == chat_id).first()
+    if c is None:
+        now = datetime.utcnow()
+        c = Chat(
+            chat_id=chat_id,
+            title=title,
+            subscription_tier="trial",
+            trial_ends_at=now + timedelta(days=TRIAL_DAYS),
+            subscription_ends_at=None,
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        return c
+    if title and c.title != title:
+        c.title = title
+        db.commit()
+        db.refresh(c)
+    return c
+
+
+def get_chat(db: Session, chat_id: int) -> Chat | None:
+    return db.query(Chat).filter(Chat.chat_id == chat_id).first()
+
+
+def list_all_chats(db: Session):
+    return db.query(Chat).all()
+
+
+def set_chat_autoclose_rules(db: Session, chat_id: int, rules: list | None) -> None:
+    c = ensure_chat(db, chat_id)
+    c.autoclose_rules = rules
+    db.commit()
+
+
+def get_or_create_subject(db: Session, chat_id: int, subject_name: str) -> Subject:
+    s = (
+        db.query(Subject)
+        .filter(
+            Subject.chat_id == chat_id,
+            Subject.subject_name == subject_name,
+        )
+        .first()
+    )
+    if s:
+        return s
+    s = Subject(chat_id=chat_id, subject_name=subject_name)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+def get_subject_by_id(db: Session, subject_id: int) -> Subject | None:
+    return db.query(Subject).filter(Subject.id == subject_id).first()
+
+
+def get_subject_by_chat_name(
+    db: Session, chat_id: int, subject_name: str
+) -> Subject | None:
+    return (
+        db.query(Subject)
+        .filter(
+            Subject.chat_id == chat_id,
+            Subject.subject_name == subject_name,
+        )
+        .first()
+    )
+
+
+def is_queue_duplicate(
+    db: Session, subject_id: int, chat_id: int, lesson_date: datetime
+) -> bool:
+    q = (
+        db.query(Queue)
+        .filter(
+            Queue.subject_id == subject_id,
+            Queue.chat_id == chat_id,
+            Queue.lesson_date == lesson_date,
+        )
+        .first()
+    )
+    return q is not None
+
+
+def add_queue_row(
+    db: Session,
+    *,
+    subject_id: int,
+    chat_id: int,
+    message_id: int,
+    lesson_date: datetime,
+    close_at: datetime | None,
+    status: str,
+    participants: list,
+    extra: dict | None = None,
+) -> Queue:
+    row = Queue(
+        subject_id=subject_id,
+        chat_id=chat_id,
+        message_id=message_id,
+        lesson_date=lesson_date,
+        close_at=close_at,
+        status=status,
+        participants=list(participants),
+        extra=extra or {},
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_queue_by_message_id(db: Session, message_id: int) -> Queue | None:
+    return db.query(Queue).filter(Queue.message_id == message_id).first()
+
+
+def get_queue_by_chat_message(
+    db: Session, chat_id: int, message_id: int
+) -> Queue | None:
+    return (
+        db.query(Queue)
+        .filter(Queue.chat_id == chat_id, Queue.message_id == message_id)
+        .first()
+    )
+
+
+def get_queue_by_subject_lesson(
+    db: Session, chat_id: int, subject_id: int, lesson_date: datetime
+) -> Queue | None:
+    return (
+        db.query(Queue)
+        .filter(
+            Queue.chat_id == chat_id,
+            Queue.subject_id == subject_id,
+            Queue.lesson_date == lesson_date,
+        )
+        .first()
+    )
+
+
+def apply_slot_penalties_after_last_submitter(
+    db: Session, order: list[int | str], successful_slot_index: int, subject_id: int
+) -> None:
     """
-    try:
-        with get_db() as db:
+    Логика штрафов:
+    1. Участники со слотами <= successful_slot_index считаются 'успешными'.
+    2. Слоты > successful_slot_index считаются 'нереализованными'.
+    3. За каждый нереализованный слот удаляем запись из history_position.
+    4. +1 к missed_attempts_count только если у пользователя НЕТ успешных слотов в этой очереди.
+    """
+    # 1. Кто успел подойти (хотя бы один слот до или на позиции последнего сдавшего)
+    successful_uids = set()
+    for i in range(successful_slot_index + 1):
+        entry = order[i]
+        if isinstance(entry, int):
+            successful_uids.add(entry)
 
-            column = getattr(bd_model, column_name)
-            bd_request = db.query(bd_model).filter(
-                column == user_data
-            ).first()
-            return bd_request is not None
-    except Exception as error:
-        logger.error(f"Ошибка при проверки существования"
-                     f"{user_data} в таблице {bd_model}")
-        raise ValueError(
-            f"Ошибка при проверки существования в БД: {error}")
+    # 2. Считаем нереализованные слоты (те, что после последнего сдавшего)
+    unrealized_counts: dict[int, int] = {}
+    for i in range(successful_slot_index + 1, len(order)):
+        entry = order[i]
+        if isinstance(entry, int):
+            unrealized_counts[entry] = unrealized_counts.get(entry, 0) + 1
 
-
-def is_queue_in_db(subject_id: int, chat_id: int, lesson_date: int) -> bool:
-    """Функция для проверки попытки создать существующую запись в QUEUE."""
-    try:
-        with get_db() as db:
-            existing_queue = db.query(Queue).filter(
-                Queue.subject_id == subject_id,
-                Queue.chat_id == chat_id,
-                Queue.lesson_date == lesson_date
-            ).first()
-
-            return existing_queue is not None
-    except Exception as error:
-        logger.error("Ошибка при проверки существования QUEUE")
-        raise ValueError(
-            f"Ошибка при проверки существования в БД: {error}")
-
-
-def add_new_subject(chat_id: int, subject_name: str):
-    """Функция для добавления нового предмета в БД."""
-    try:
-        with get_db() as db:
-            new_subject = Subject(
-                chat_id=chat_id,
-                subject_name=subject_name,
+    # 3. Применяем изменения
+    for uid, count in unrealized_counts.items():
+        row = (
+            db.query(SubmissionAttempt)
+            .filter(
+                SubmissionAttempt.tg_id == uid,
+                SubmissionAttempt.subject_id == subject_id,
             )
+            .first()
+        )
+        if not row:
+            continue
 
-            db.add(new_subject)
-            db.commit()
-            db.refresh(new_subject)
+        # Удаляем записи из истории за каждый нереализованный слот
+        hp = list(row.history_position or [])
+        for _ in range(count):
+            if hp:
+                hp.pop()
+        row.history_position = hp
+        flag_modified(row, "history_position")
 
-            logger.info(
-                f"Добавлен новый subject, subject_id: {new_subject.id}")
-    except Exception as error:
-        db.rollback()
-        logger.error(f"Ошибка при добавлении предмета в БД: {error}")
-        raise ValueError(
-            f"Ошибка при добавлении предмета в БД: {error}")
+        # Штраф к missed_attempts только если человек ВООБЩЕ не успел подойти сегодня
+        if uid not in successful_uids:
+            row.missed_attempts_count = int(row.missed_attempts_count or 0) + count
 
-
-def add_new_queue(
-        subject_id: int, chat_id: int, message_id: int,
-        lesson_date: datetime, close_at: datetime,
-        status: str,
-        usernames: list):
-    """Функция для добавления нового предмета в БД."""
-    try:
-        with get_db() as db:
-
-            new_queue = Queue(
-                subject_id=subject_id,
-                chat_id=chat_id,
-                message_id=message_id,
-                lesson_date=lesson_date,
-                close_at=close_at,
-                status=status,
-                usernames=usernames
-            )
-
-            db.add(new_queue)
-            db.commit()
-            db.refresh(new_queue)
-
-            logger.info(
-                f"Добавлен новый queue, queue_id: {new_queue.id}")
-    except IntegrityError as error:
-        logger.error(f"Ошибка при добавлении записи в очередь в БД: {error}")
-        raise ValueError(
-            f"Ошибка при добавлении записи в очередь в БД: {error}")
-    except Exception as error:
-        db.rollback()
-        logger.error(f"Ошибка при добавлении очереди в БД: {error}")
-        raise ValueError(
-            f"Ошибка при добавлении очереди в БД: {error}")
+    db.commit()
 
 
-def add_user_to_db(
-        tg_username: str,
-        chat_id: int, user_id: int,
-        real_name: str = "",
-        is_admin: bool = False):
-    """Функция для добавления пользователя в БД."""
-    with get_db() as db:
-        try:
-            new_user = User(
-                tg_username=tg_username,
-                chat_id=chat_id,
-                user_id=user_id,
-                real_name=real_name,
-                is_admin=is_admin,
-            )
-
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
-
-            logger.info(f"Добавлен новый user: {new_user.id}")
-        except Exception as error:
-            db.rollback()
-            logger.error(f"Ошибка при добавлении пользователя в БД: {error}")
+def complete_queue_last_submitter(db: Session, q: Queue, tg_id: int) -> None:
+    """Завершить очередь: последний сдавший tg_id, штрафы по всем прочим слотам."""
+    ex = q.extra or {}
+    order = list(ex.get("formed_order") or q.participants or [])
+    # Ищем только среди числовых id (игнорируем временные имена)
+    indices = [i for i, x in enumerate(order) if isinstance(x, int) and x == tg_id]
+    if not indices:
+        raise ValueError("Пользователь не в очереди.")
+    idx = indices[-1]
+    apply_slot_penalties_after_last_submitter(db, order, idx, q.subject_id)
+    q.status = "completed"
+    db.commit()
 
 
-def get_user(chat_id: int, user_id: int) -> dict:
-    """Функция для получения данных user"""
-    try:
-        with get_db() as db:
-
-            user = db.query(User).filter(
-                User.chat_id == chat_id,
-                User.user_id == user_id
-            ).first()
-
-            if user:
-                return user.__dict__
-            else:
-                raise ValueError(f"User с id '{user_id}'"
-                                 f"и chat_id '{chat_id}' не найден.")
-    except Exception as error:
-        logger.error(f"Ошибка при получении данных пользователя {error}")
-        raise ValueError(f"Ошибка при получении данных пользователя {error}")
-
-
-def get_subject_id(chat_id: int, subject_name: str) -> int:
-    """Функция для получения subject_id"""
-    try:
-        with get_db() as db:
-
-            subject = db.query(Subject).filter(
-                Subject.chat_id == chat_id,
-                Subject.subject_name == subject_name
-            ).first()
-
-            if subject:
-                return subject.id
-            else:
-                raise ValueError(f"Subject с name '{subject_name}'"
-                                 f"и chat_id '{chat_id}' не найден.")
-    except Exception as error:
-        logger.error(f"Ошибка при получении subject id {error}")
-        raise ValueError(f"Ошибка при получении subject id {error}")
+def insert_into_formed_queue(
+    db: Session, q: Queue, tg_id: int, pos_1based: int
+) -> None:
+    """Вставить в сформированную очередь (1 — первый)."""
+    if q.status != "waiting_for_last_participant":
+        raise ValueError("Неверный статус очереди (нужна сформированная).")
+    ex = dict(q.extra or {})
+    order = list(ex.get("formed_order") or q.participants or [])
+    if tg_id in order:
+        raise ValueError("Уже в списке.")
+    n = len(order)
+    if pos_1based < 1 or pos_1based > n + 1:
+        raise ValueError("Неверный номер места.")
+    order.insert(pos_1based - 1, tg_id)
+    q.participants = order
+    flag_modified(q, "participants")
+    merge_extra(db, q, {"formed_order": order})
+    append_one_history_position(db, tg_id, q.subject_id, str(pos_1based))
 
 
-def split_queue_command_message(user_command):
-    """Функция для разделения команды queue."""
-    split_command = user_command.split()
-    if len(split_command) >= 4:
-        subject_time = split_command[-1]
-        subject_date = split_command[-2]
-        subject_name = "\"" + ' '.join(split_command[1:-2]) + "\""
-        return (subject_name, subject_date, subject_time)
+def get_presence_poll(
+    db: Session, chat_id: int, message_id: int
+) -> PresencePoll | None:
+    return (
+        db.query(PresencePoll)
+        .filter(
+            PresencePoll.chat_id == chat_id,
+            PresencePoll.message_id == message_id,
+        )
+        .first()
+    )
+
+
+def upsert_presence_here(
+    db: Session, chat_id: int, message_id: int, tg_id: int, add: bool
+) -> bool:
+    """Вернуть True если изменилось. add=True — на паре, False — убрать."""
+    row = get_presence_poll(db, chat_id, message_id)
+    here = list(row.here_tg_ids if row else [])
+    if add:
+        if tg_id in here:
+            return False
+        here.append(tg_id)
     else:
-        raise ValueError(
-            "Введены неправильные параметры команды queue при выполнении "
-            "функции split_queue_command_message")
+        if tg_id not in here:
+            return False
+        here.remove(tg_id)
+    if row is None:
+        row = PresencePoll(chat_id=chat_id, message_id=message_id, here_tg_ids=here)
+        db.add(row)
+    else:
+        row.here_tg_ids = here
+        flag_modified(row, "here_tg_ids")
+    db.commit()
+    return True
 
 
-def add_tgname_in_queue(tg_username: str, message_id: int):
-    """Функция для добавления пользователя в список"""
-    with get_db() as db:
-        try:
-            queue = db.query(Queue).filter(
-                Queue.message_id == message_id).first()
-            if queue.usernames is None:
-                queue.usernames = []
-
-            if tg_username in queue.usernames:
-                return -1
-            else:
-                queue.usernames.append(tg_username)
-
-            flag_modified(queue, "usernames")
-            db.commit()
-            logger.info(f"Добавлен новый "
-                        f"tg_username в usernames: {tg_username}")
-        except Exception as error:
-            db.rollback()
-            logger.error(
-                "Ошибка при добавлении tg_username в список usernames")
-            raise ValueError(f"Ошибка при добавлении "
-                             f"tg_username в список usernames {error}")
+def update_queue_message_id(db: Session, q: Queue, new_message_id: int) -> None:
+    q.message_id = new_message_id
+    db.commit()
 
 
-def change_realname(tg_username: str, new_realname: str):
-    """Функция для изменения realname пользователя."""
+def set_queue_status(db: Session, q: Queue, status: str) -> None:
+    q.status = status
+    db.commit()
+
+
+def merge_extra(db: Session, q: Queue, patch: dict) -> None:
+    ex = dict(q.extra or {})
+    ex.update(patch)
+    q.extra = ex
+    flag_modified(q, "extra")
+    db.commit()
+
+
+def add_participant(db: Session, q: Queue, tg_id: int) -> int:
+    """Вернуть 0 ок, -1 уже в списке."""
+    ids = list(q.participants or [])
+    if tg_id in ids:
+        return -1
+    ids.append(tg_id)
+    q.participants = ids
+    flag_modified(q, "participants")
+    db.commit()
+    return 0
+
+
+def remove_participant(db: Session, q: Queue, tg_id: int) -> None:
+    ids = [x for x in (q.participants or []) if x != tg_id]
+    q.participants = ids
+    flag_modified(q, "participants")
+    db.commit()
+
+
+def delete_queue_row(db: Session, q: Queue) -> None:
+    db.delete(q)
+    db.commit()
+
+
+def get_user_display(db: Session, tg_id: int) -> str:
+    u = db.query(User).filter(User.tg_id == tg_id).first()
+    if u is None:
+        return str(tg_id)
+    if u.real_name:
+        un = f"@{u.tg_username}" if u.tg_username else ""
+        return f"{u.real_name} {un}".strip()
+    if u.tg_username:
+        return f"@{u.tg_username}"
+    return str(tg_id)
+
+
+def change_realname_for_user(db: Session, tg_id: int, new_name: str) -> None:
+    u = db.query(User).filter(User.tg_id == tg_id).first()
+    if not u:
+        raise ValueError("Пользователь не найден")
+    u.real_name = new_name
+    db.commit()
+
+
+def ensure_submission_row(db: Session, tg_id: int, subject_id: int) -> SubmissionAttempt:
+    s = (
+        db.query(SubmissionAttempt)
+        .filter(
+            SubmissionAttempt.tg_id == tg_id,
+            SubmissionAttempt.subject_id == subject_id,
+        )
+        .first()
+    )
+    if s:
+        return s
+    s = SubmissionAttempt(
+        tg_id=tg_id,
+        subject_id=subject_id,
+        history_position=[],
+        missed_attempts_count=0,
+    )
+    db.add(s)
     try:
-        with get_db() as db:
-            tg_username = tg_username[1:]  # Убираем символ @
-            realname_to_update = db.query(User).filter(
-                func.lower(User.tg_username) == func.lower(tg_username)
-            ).first()
-            if realname_to_update:
-                realname_to_update.real_name = new_realname
-                db.commit()
-                logger.info(
-                    f"realname пользователя {tg_username} был изменён на "
-                    f"{realname_to_update.real_name}")
-            else:
-                logger.warning(f"Пользователь {tg_username} не найден")
-                raise ValueError(f"Пользователь {tg_username} не найден")
-    except Exception as error:
-        logger.error(f"Ошибка при изменении realname: {error}")
-        raise ValueError(
-            f"Ошибка при изменении realname: {error}")
+        db.commit()
+        db.refresh(s)
+    except IntegrityError:
+        db.rollback()
+        s = (
+            db.query(SubmissionAttempt)
+            .filter(
+                SubmissionAttempt.tg_id == tg_id,
+                SubmissionAttempt.subject_id == subject_id,
+            )
+            .first()
+        )
+    return s
 
 
-def get_realname(tg_username: str) -> str:
-    """Функция для получения realname пользователя."""
-    with get_db() as db:
-        tg_username = tg_username[1:]
-        temp = db.query(User).filter(
-            func.lower(User.tg_username) == func.lower(tg_username)
-        ).first()
-        if temp:
-            return temp.real_name
-        else:
-            logger.warning(f"Realname пользователя {tg_username} не найден")
-            raise ValueError(f"Realname пользователя {tg_username} не найден")
+def append_one_history_position(
+    db: Session, tg_id: int, subject_id: int, position_label: str
+) -> None:
+    row = ensure_submission_row(db, tg_id, subject_id)
+    hp = list(row.history_position or [])
+    hp.append(position_label)
+    row.history_position = hp
+    flag_modified(row, "history_position")
+    db.commit()
 
 
-def remove_tgname_in_queue(
-        tg_username: str, message_id: int, subject_id: int, chat_id: int):
-    """Функция для удаления пользователя из записи на предмет
-    Обновляет Queue
+def add_history_positions(
+    db: Session, ordered_tg_ids: list[int], subject_id: int
+) -> None:
+    for idx, tg_id in enumerate(ordered_tg_ids):
+        row = ensure_submission_row(db, tg_id, subject_id)
+        hp = list(row.history_position or [])
+        hp.append(str(idx + 1))
+        row.history_position = hp
+        flag_modified(row, "history_position")
+    db.commit()
+
+
+def increment_missed_for_tg_ids(
+    db: Session, tg_ids: list[int], subject_id: int
+) -> None:
+    for tg_id in tg_ids:
+        row = ensure_submission_row(db, tg_id, subject_id)
+        row.missed_attempts_count = int(row.missed_attempts_count or 0) + 1
+    db.commit()
+
+
+def get_payment_by_yookassa_id(
+    db: Session, yookassa_payment_id: str
+) -> PaymentRecord | None:
+    return (
+        db.query(PaymentRecord)
+        .filter(PaymentRecord.yookassa_payment_id == yookassa_payment_id)
+        .first()
+    )
+
+
+def create_payment_record(
+    db: Session,
+    yookassa_id: str,
+    chat_id: int,
+    tier: str,
+    amount_rub: str,
+    status: str,
+    *,
+    commit: bool = True,
+) -> PaymentRecord:
+    p = PaymentRecord(
+        yookassa_payment_id=yookassa_id,
+        chat_id=chat_id,
+        tier=tier,
+        amount_rub=amount_rub,
+        status=status,
+    )
+    db.add(p)
+    if commit:
+        db.commit()
+        db.refresh(p)
+    return p
+
+
+def _subscription_access_state(
+    chat: Chat, now: datetime
+) -> tuple[str, datetime | None]:
+    """Текущий «линейный» доступ: trial / base / supervip / expired и конец периода."""
+    tier = (chat.subscription_tier or "trial").lower()
+    sub_end = chat.subscription_ends_at
+    trial_end = chat.trial_ends_at
+    if tier == "supervip" and sub_end and sub_end > now:
+        return "supervip", sub_end
+    if tier == "base" and sub_end and sub_end > now:
+        return "base", sub_end
+    if trial_end and trial_end > now:
+        return "trial", trial_end
+    return "expired", None
+
+
+def _stack_calendar_months_for_purchase(target_tier: str, state: str) -> bool:
     """
-    with get_db() as db:
-        # убираем из списка очереди
-        try:
-            queue: Queue = db.query(Queue).filter(
-                Queue.chat_id == chat_id,
-                Queue.message_id == message_id,
-                Queue.subject_id == subject_id).first()
+    Продление тем же продуктовым рядом: дни суммируются календарно (месяц/год),
+    а не через дневную ставку от месячной цены (иначе «год за 1490» даёт ~299 «месячных» дней).
+    """
+    t = target_tier.lower()
+    if t == "base":
+        return state in ("base", "trial", "expired")
+    if t == "supervip":
+        return state in ("supervip", "expired")
+    return False
 
-            if tg_username not in queue.usernames:
-                return
 
-            index = queue.usernames.index(tg_username)
-            del queue.usernames[index]
+def apply_paid_subscription(
+    db: Session,
+    chat_id: int,
+    tier: str,
+    amount_paid: float,
+    months: int = 0,
+    *,
+    commit: bool = True,
+) -> None:
+    """
+    - Один и тот же тариф (Base поверх Base/Trial, SuperVIP поверх SuperVIP): к текущему
+      окончанию доступа прибавляются купленные месяцы (1 или 12).
+    - Смена тарифа (Base ↔ SuperVIP) или legacy-платежи без months: денежный pro-rata —
+      остаток текущего доступа в рублях + оплата, перевод в дни по ставке нового тарифа.
+    """
+    from src.services.subscription import current_access_deadline
 
-            flag_modified(queue, "usernames")
+    chat = ensure_chat(db, chat_id)
+    now = datetime.utcnow()
+    tier_l = tier.lower()
+
+    rates = {
+        "base": 149.0,
+        "supervip": 249.0,
+        "trial": 149.0,
+    }
+
+    state, _ = _subscription_access_state(chat, now)
+    deadline = current_access_deadline(chat, now)
+
+    if months > 0 and _stack_calendar_months_for_purchase(tier_l, state):
+        anchor = max(now, deadline) if deadline else now
+        new_deadline = anchor + relativedelta(months=months)
+        chat.subscription_tier = tier_l
+        chat.subscription_ends_at = new_deadline
+        chat.subscription_reminder_state = None
+        if commit:
             db.commit()
-            logger.info(f"Удален из списка очереди "
-                        f"tg_username в usernames: {tg_username}")
-            return -1
-        except Exception as e:
-            db.rollback()
-            logger.error("Ошибка при удалении из Queue")
-            logger.error(f"{e}")
+        return
+
+    # Pro-rata: смена уровня или платёж без явного периода
+    remaining_days = 0.0
+    if deadline and deadline > now:
+        remaining_days = (deadline - now).total_seconds() / 86400.0
+
+    if state == "supervip":
+        old_daily = rates["supervip"] / 30.0
+    elif state == "base":
+        old_daily = rates["base"] / 30.0
+    elif state == "trial":
+        old_daily = rates["trial"] / 30.0
+    else:
+        old_daily = 0.0
+
+    current_value = remaining_days * old_daily
+    total_value = current_value + float(amount_paid)
+    new_daily_rate = rates.get(tier_l, 149.0) / 30.0
+    if new_daily_rate <= 0:
+        new_daily_rate = 149.0 / 30.0
+    new_days = total_value / new_daily_rate
+    new_deadline = now + timedelta(days=new_days)
+
+    chat.subscription_tier = tier_l
+    chat.subscription_ends_at = new_deadline
+    chat.subscription_reminder_state = None
+    if commit:
+        db.commit()
 
 
-def add_submission_attempt(tgname: str, subject_id: int):
-    """Если у пользователя не было записи в Submission Attempt
-    Создаёт ему такую запись
-    """
-    with get_db() as db:
-        try:
-            if db.query(SubmissionAttempt).filter(
-                    SubmissionAttempt.subject_id == subject_id,
-                    SubmissionAttempt.tg_username == tgname).first() is None:
-                new_attempt = SubmissionAttempt(
-                    tg_username=tgname, subject_id=subject_id,
-                    history_position=[], missed_attempts_count=0)
-                db.add(new_attempt)
-                db.commit()
-                db.refresh(new_attempt)
-        except Exception as e:
-            db.rollback()
-            logger.error("Ошибка при добавлении в SubmisiionAttempt")
-            logger.error(f"{e}")
+def apply_upgrade_to_supervip(db: Session, chat_id: int, months: int = 1) -> None:
+    # Эта функция больше не нужна, так как apply_paid_subscription теперь универсальна
+    # Но оставим заглушку для совместимости, если нужно
+    pass
 
 
-def add_history_position(queue: list[tuple], subject_id: int):
-    """
-    Функция для добавления позиции пользователя в историю позиций
-    chat_id и subject_name для того чтобы достать subject_id
-    """
-    # Запись выглядит так чуть поменять кое что
-    # [["1", "tgname1"], ["2", "tgname2"]] , на айди потом изи свапнуть
-    with get_db() as db:
-        try:
-            for pos, tgname in queue:
-                tgname = tgname.replace(" ", "")
-
-                add_submission_attempt(tgname, subject_id)
-
-                people_history: SubmissionAttempt = (
-                    db.query(SubmissionAttempt)
-                    .filter(SubmissionAttempt.subject_id == subject_id,
-                            SubmissionAttempt.tg_username == tgname
-                            ).first())
-                if people_history.history_position in [None, []]:
-                    people_history.history_position = [str(pos)]
-                else:
-                    people_history.history_position.append(str(pos))
-
-                flag_modified(people_history, "history_position")
-                db.commit()
-                logger.info(f"Обновлена история позиций у {tgname}")
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Ошибка при обновлении списка позиций {e}")
+def apply_upgrade_tier_only(
+    db: Session, chat_id: int, tier: str, *, commit: bool = True
+) -> None:
+    """Просто повышает уровень подписки без изменения даты окончания (для пропорциональной доплаты)."""
+    chat = ensure_chat(db, chat_id)
+    chat.subscription_tier = tier.lower()
+    chat.subscription_reminder_state = None
+    if commit:
+        db.commit()
 
 
-def remove_queue(
-        username: str, chat_id: int, message_id: int, subject_id: int):
-    """Полное удаление Queue строки"""
-    with get_db() as db:
-        try:
-            stm = delete(Queue).where(
-                Queue.message_id == message_id,
-                Queue.chat_id == chat_id,
-                Queue.subject_id == subject_id)
-            db.execute(stm)
-            db.commit()
-            logger.info("Успешное удаление Queue в {chat_id}")
-        except Exception as e:
-            logger.error(f"Ошибка при удалении всей очереди Queue в {chat_id}")
-            logger.error(f"Ошибка при удалении всей очереди Queue в {e}")
+def find_user_by_username(db: Session, username: str) -> User | None:
+    u = username.strip().lstrip("@").lower()
+    return (
+        db.query(User)
+        .filter(func.lower(User.tg_username) == func.lower(u))
+        .first()
+    )
 
 
-def save_position_not_pass(missed_peoples: list[tuple], subject_id):
-    """Функция которая пометит позиции людей, которые не успели сдать"""
-    with get_db() as db:
-        try:
-            for pos, tgname in missed_peoples:
-                people_history: SubmissionAttempt = db.query(
-                    SubmissionAttempt).filter(
-                        SubmissionAttempt.subject_id == subject_id,
-                        SubmissionAttempt.tg_username == tgname
-                ).first()
+def list_queues_waiting_last(db: Session):
+    return (
+        db.query(Queue)
+        .filter(Queue.status == "waiting_for_last_participant")
+        .all()
+    )
 
-                people_history.missed_attempts_count += 1
-                people_history.history_position = people_history.history_position[:-1]
-                db.commit()
-            else:
-                logger.info(f"Люди, которые не успели: {missed_peoples}")
 
-        except Exception as e:
-            logger.error(
-                f"Ошибка при отметке людей которые не успели сдать {e}")
+def list_queues_recruiting(db: Session):
+    return (
+        db.query(Queue).filter(Queue.status == "waiting_for_participants").all()
+    )
+
+
+def open_swap(
+    db: Session,
+    chat_id: int,
+    queue_message_id: int,
+    subject_id: int,
+    from_tg_id: int,
+    swap_message_id: int,
+) -> SwapRequest:
+    sw = SwapRequest(
+        chat_id=chat_id,
+        queue_message_id=queue_message_id,
+        subject_id=subject_id,
+        from_tg_id=from_tg_id,
+        to_tg_id=None,
+        status="open",
+        swap_message_id=swap_message_id,
+    )
+    db.add(sw)
+    db.commit()
+    db.refresh(sw)
+    return sw
+
+
+def find_open_swap_for_message(db: Session, queue_message_id: int) -> SwapRequest | None:
+    """Открытая заявка этапа набора: второй участник ещё не нажал «Поменяться»."""
+    return (
+        db.query(SwapRequest)
+        .filter(
+            SwapRequest.queue_message_id == queue_message_id,
+            SwapRequest.status == "open",
+            SwapRequest.to_tg_id.is_(None),
+        )
+        .first()
+    )
+
+
+def delete_swaps_pending_for_queue(db: Session, queue_message_id: int) -> None:
+    """Удалить незавершённые обмены по этому сообщению очереди."""
+    db.execute(
+        delete(SwapRequest).where(
+            SwapRequest.queue_message_id == queue_message_id,
+            SwapRequest.status.in_(("open", "await_accept")),
+        )
+    )
+    db.commit()
+
+
+def get_swap_request(db: Session, swap_id: int) -> SwapRequest | None:
+    return db.query(SwapRequest).filter(SwapRequest.id == swap_id).first()
+
+
+def delete_swap_request_row(db: Session, sw: SwapRequest) -> None:
+    db.delete(sw)
+    db.commit()
+
+
+def create_formed_swap_request(
+    db: Session,
+    chat_id: int,
+    queue_message_id: int,
+    subject_id: int,
+    from_tg_id: int,
+    to_tg_id: int,
+    confirm_message_id: int | None = None,
+) -> SwapRequest:
+    sw = SwapRequest(
+        chat_id=chat_id,
+        queue_message_id=queue_message_id,
+        subject_id=subject_id,
+        from_tg_id=from_tg_id,
+        to_tg_id=to_tg_id,
+        status="await_accept",
+        swap_message_id=confirm_message_id,
+    )
+    db.add(sw)
+    db.commit()
+    db.refresh(sw)
+    return sw
+
+
+def set_swap_request_message_id(db: Session, sw: SwapRequest, msg_id: int) -> None:
+    sw.swap_message_id = msg_id
+    db.commit()
+
+
+def mark_swap_done(db: Session, sw: SwapRequest) -> None:
+    sw.status = "done"
+    db.commit()
+
+
+def complete_swap(db: Session, sw: SwapRequest, to_tg_id: int) -> None:
+    sw.to_tg_id = to_tg_id
+    sw.status = "done"
+    db.commit()
+
+
+def delete_swaps_for_queue(db: Session, queue_message_id: int) -> None:
+    db.execute(delete(SwapRequest).where(SwapRequest.queue_message_id == queue_message_id))
+    db.commit()

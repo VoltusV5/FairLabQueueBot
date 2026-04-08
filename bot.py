@@ -4,32 +4,38 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from config import Config, load_config
-from src.handlers import student, admin
-from src.services import queue_manager
+from src.handlers import admin
+from src.middleware.subscription_gate import SubscriptionGateMiddleware
+from src.services.scheduler import run_periodic
 
 
 async def main():
     """Основная функция."""
-    # Загружаем конфиг в переменную config
     config: Config = load_config()
 
-    # Задаём базовую конфигурацию логирования
-    logging.basicConfig(
-        level=logging.getLevelName(level=config.log.level),
-        format=config.log.format,
-    )
+    level = getattr(logging, str(config.log.level).upper(), logging.INFO)
+    logging.basicConfig(level=level, format=config.log.format)
 
-    # Инициализируем бот и диспетчер
-    bot = Bot(token=config.bot.token)
+    bot = Bot(
+        token=config.bot.token,
+        default=DefaultBotProperties(parse_mode="HTML")
+    )
     dp = Dispatcher()
 
-    # Регистриуем роутеры в диспетчере
-    dp.include_router(student.router)
+    gate = SubscriptionGateMiddleware()
+    dp.message.middleware(gate)
+    dp.callback_query.middleware(gate)
+
+    # admin.router уже включает student, queue, subscription, vip
     dp.include_router(admin.router)
 
-    # Пропускаем накопившиеся апдейты и запускаем polling
+    asyncio.create_task(run_periodic(bot))
+
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
