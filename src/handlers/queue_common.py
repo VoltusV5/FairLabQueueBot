@@ -116,7 +116,7 @@ def kb_last_confirm(chat_id: int, msg_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Да, я последний сдавший",
+                    text="Да, я последний сдававший",
                     callback_data=f"ly|{chat_id}|{msg_id}",
                 ),
                 InlineKeyboardButton(
@@ -133,7 +133,7 @@ def kb_after_formed(chat_id: int, msg_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Я последний сдавший",
+                    text="Я последний сдававший",
                     callback_data=f"lp|{chat_id}|{msg_id}",
                 ),
                 InlineKeyboardButton(
@@ -293,6 +293,9 @@ async def finalize_queue_core(
     flag_modified(q, "participants")
     q.status = QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value
     now = datetime.utcnow()
+    # Таймер "кто последний" не должен стартовать раньше фактического времени занятия.
+    # Если очередь сформировали заранее (автозакрытие/ручное закрытие), отсчёт начнётся от lesson_date.
+    voting_started = q.lesson_date if q.lesson_date and q.lesson_date > now else now
     refused_slots: set[int] = set()
     for t in refused_tg:
         idxs = [i for i, x in enumerate(ordered) if x == t]
@@ -303,7 +306,7 @@ async def finalize_queue_core(
         q,
         {
             "formed_order": ordered,
-            "voting_started_at": now.isoformat(),
+            "voting_started_at": voting_started.isoformat(),
             "reminder_5h_sent": False,
             "deadline_24h_applied": False,
             "refused_slot_indices": sorted(refused_slots),

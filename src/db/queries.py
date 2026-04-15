@@ -26,6 +26,8 @@ from .init_db import (
 logger = logging.getLogger(__name__)
 
 TRIAL_DAYS = 30
+# Промо: для новых чатов до указанного момента выдаём 1 месяц SuperVIP вместо trial.
+PROMO_SUPERVIP_UNTIL_UTC = datetime(2026, 4, 19, 23, 59, 59)
 
 
 def ensure_user(
@@ -55,13 +57,22 @@ def ensure_chat(db: Session, chat_id: int, title: str | None = None) -> Chat:
     c = db.query(Chat).filter(Chat.chat_id == chat_id).first()
     if c is None:
         now = datetime.utcnow()
-        c = Chat(
-            chat_id=chat_id,
-            title=title,
-            subscription_tier="trial",
-            trial_ends_at=now + timedelta(days=TRIAL_DAYS),
-            subscription_ends_at=None,
-        )
+        if now <= PROMO_SUPERVIP_UNTIL_UTC:
+            c = Chat(
+                chat_id=chat_id,
+                title=title,
+                subscription_tier="supervip",
+                trial_ends_at=None,
+                subscription_ends_at=now + relativedelta(months=1),
+            )
+        else:
+            c = Chat(
+                chat_id=chat_id,
+                title=title,
+                subscription_tier="trial",
+                trial_ends_at=now + timedelta(days=TRIAL_DAYS),
+                subscription_ends_at=None,
+            )
         db.add(c)
         db.commit()
         db.refresh(c)
@@ -435,6 +446,48 @@ def add_history_positions(
     db.commit()
 
 
+def sync_last_history_positions_after_swap(
+    db: Session,
+    *,
+    subject_id: int,
+    first_tg_id: int,
+    first_new_pos_1based: int,
+    second_tg_id: int,
+    second_new_pos_1based: int,
+    commit: bool = True,
+) -> None:
+    """
+    После swap в сформированной очереди синхронизирует ПОСЛЕДНЮЮ запись
+    history_position для двух участников.
+
+    Схема БД не меняется: просто переписываем последний элемент массива.
+    Если истории нет/пуста — запись пропускается.
+    """
+    pairs = (
+        (first_tg_id, first_new_pos_1based),
+        (second_tg_id, second_new_pos_1based),
+    )
+    for tg_id, new_pos in pairs:
+        row = (
+            db.query(SubmissionAttempt)
+            .filter(
+                SubmissionAttempt.tg_id == tg_id,
+                SubmissionAttempt.subject_id == subject_id,
+            )
+            .first()
+        )
+        if not row:
+            continue
+        hp = list(row.history_position or [])
+        if not hp:
+            continue
+        hp[-1] = str(new_pos)
+        row.history_position = hp
+        flag_modified(row, "history_position")
+    if commit:
+        db.commit()
+
+
 def increment_missed_for_tg_ids(
     db: Session, tg_ids: list[int], subject_id: int
 ) -> None:
@@ -503,7 +556,9 @@ def _stack_calendar_months_for_purchase(target_tier: str, state: str) -> bool:
     if t == "base":
         return state in ("base", "trial", "expired")
     if t == "supervip":
-        return state in ("supervip", "expired")
+        # SuperVIP-покупка из trial тоже должна начисляться календарно
+        # (например, svip_12 = +12 месяцев, а не pro-rata в днях).
+        return state in ("supervip", "trial", "expired")
     return False
 
 

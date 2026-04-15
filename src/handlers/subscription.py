@@ -101,7 +101,8 @@ async def cmd_pay(message: Message) -> None:
         f"<b>Управление подпиской чата</b>\n\n"
         f"{status_text}\n\n"
         "Выберите тарифный план для продления доступа. "
-        "Время суммируется с текущим остатком.",
+        "Время суммируется с текущим остатком. "
+        "(СБП, банковская карта, ЮMoney, T-Pay, SberPay)",
         reply_markup=kb,
     )
 
@@ -133,13 +134,19 @@ async def cb_pay(callback: CallbackQuery) -> None:
         return
     
     # pay|tier_months|chat_id
+    # pay|svupg_months|chat_id  -> явный апгрейд Base->SuperVIP до конца текущего срока
+    # pay|svfull_months|chat_id -> явная покупка полного периода SuperVIP
     _, plan, cid_s = callback.data.split("|")
     chat_id = int(cid_s)
     
     tier_code, months_s = plan.split("_")
     months = int(months_s)
     
-    meta_tier = "base" if tier_code == "base" else "supervip"
+    if tier_code in ("base", "svip", "svupg", "svfull"):
+        meta_tier = "base" if tier_code == "base" else "supervip"
+    else:
+        await callback.answer("Неизвестный тариф.", show_alert=True)
+        return
 
     prices = {
         "base_1": 149,
@@ -147,16 +154,27 @@ async def cb_pay(callback: CallbackQuery) -> None:
         "base_12": 1490,
         "svip_12": 1990,
     }
-    if plan not in prices:
+    if tier_code in ("base", "svip") and plan not in prices:
         await callback.answer("Неизвестный тариф.", show_alert=True)
         return
 
-    amount = f"{prices[plan]}.00"
+    amount = f"{prices.get(plan, 0)}.00"
     desc = (
         f"Base подписка ({months} мес.)"
         if meta_tier == "base"
         else f"SuperVIP подписка ({months} мес.)"
     )
+    if tier_code == "svfull":
+        full_plan = f"svip_{months}"
+        if full_plan not in prices:
+            await callback.answer("Неизвестный тариф.", show_alert=True)
+            return
+        amount = f"{prices[full_plan]}.00"
+        desc = f"SuperVIP подписка ({months} мес.)"
+    if tier_code == "svupg":
+        # Эта ветка только для активного Base и рассчитывается ниже.
+        amount = "0.00"
+        desc = "Апгрейд Base → SuperVIP"
 
     # Логика доплаты (Upgrade) или Даунгрейда (Downgrade)
     upgrade_mode = False
@@ -176,8 +194,55 @@ async def cb_pay(callback: CallbackQuery) -> None:
                     )
                     return
 
-            # Апгрейд с Base до SuperVIP за оставшийся период: фикс. доплата за день
-            if meta_tier == "supervip" and chat.subscription_tier == "base" and remaining_days > 0:
+            # Для active Base и выбора SuperVIP сначала даем пользователю
+            # явный выбор: апгрейд остатка или покупка полного периода.
+            if (
+                tier_code == "svip"
+                and chat.subscription_tier == "base"
+                and remaining_days > 0
+            ):
+                rub_per_day = 3.0 if remaining_days < 30 else 2.0
+                upgrade_cost = remaining_days * rub_per_day
+                upgrade_amount_int = max(10, int(upgrade_cost + 0.99))
+                full_price = prices.get(plan, 0)
+                choose = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=f"⚡ Апгрейд до конца срока — {upgrade_amount_int} ₽",
+                                callback_data=f"pay|svupg_{months}|{chat_id}",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=f"🗓 Полный SuperVIP ({months} мес.) — {full_price} ₽",
+                                callback_data=f"pay|svfull_{months}|{chat_id}",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="Отменить",
+                                callback_data="pay_cancel",
+                            )
+                        ],
+                    ]
+                )
+                await callback.message.edit_text(
+                    "<b>Выберите вариант перехода на SuperVIP</b>\n\n"
+                    f"Текущий Base-остаток: ~{int(remaining_days)} дн.\n"
+                    f"Апгрейд учитывает остаток как доплату ({rub_per_day:g} ₽/день).\n"
+                    "Полный период начисляет новый срок SuperVIP по выбранному плану.",
+                    reply_markup=choose,
+                )
+                await callback.answer()
+                return
+
+            # Явный апгрейд с Base до SuperVIP за оставшийся период.
+            if (
+                tier_code == "svupg"
+                and chat.subscription_tier == "base"
+                and remaining_days > 0
+            ):
                 rub_per_day = 3.0 if remaining_days < 30 else 2.0
                 upgrade_cost = remaining_days * rub_per_day
                 upgrade_amount_int = max(10, int(upgrade_cost + 0.99))
@@ -191,6 +256,29 @@ async def cb_pay(callback: CallbackQuery) -> None:
                 # В этом режиме мы НЕ добавляем новые месяцы, а просто повышаем уровень
                 # Поэтому в метаданных передаем 0 месяцев
                 months = 0
+            elif tier_code == "svupg":
+                await callback.answer(
+                    "Апгрейд недоступен: нет активного остатка Base.",
+                    show_alert=True,
+                )
+                return
+
+            # Явная покупка полного периода SuperVIP (без апгрейда остатка).
+            if tier_code == "svfull":
+                full_plan = f"svip_{months}"
+                if full_plan not in prices:
+                    await callback.answer("Неизвестный тариф.", show_alert=True)
+                    return
+                amount = f"{prices[full_plan]}.00"
+                desc = f"SuperVIP подписка ({months} мес.)"
+                upgrade_mode = False
+
+    if tier_code == "svupg" and not upgrade_mode:
+        await callback.answer(
+            "Апгрейд недоступен: нужен активный Base с остатком срока.",
+            show_alert=True,
+        )
+        return
 
     await callback.answer("Создаём платёж…")
     idem = str(uuid.uuid4())
@@ -219,7 +307,10 @@ async def cb_pay(callback: CallbackQuery) -> None:
         return
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="Оплатить", url=pay.confirmation.confirmation_url)
+    builder.button(
+        text="Оплатить (СБП, БК, T-Pay, SberPay)",
+        url=pay.confirmation.confirmation_url,
+    )
     builder.button(text="Проверить оплату", callback_data=f"chk|{pay.id}")
     builder.button(text="Отменить", callback_data="pay_cancel")
     builder.adjust(1)

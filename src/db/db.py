@@ -1,12 +1,22 @@
 """Файл для подключения БД
 Импортируй этот файл и у тебя будет доступ к БД.
+
+Если задан DATABASE_URL (PostgreSQL), используется он; иначе — SQLite app.db.
 """
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
-from pathlib import Path
-from .init_db import Base
+import os
 from contextlib import contextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+
+from .init_db import Base
+
+# Загрузка .env из корня проекта до чтения DATABASE_URL
+_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_ROOT / ".env")
 
 
 def _migrate_sqlite_schema(engine) -> None:
@@ -40,14 +50,25 @@ def _migrate_sqlite_schema(engine) -> None:
         if "groups" not in cols:
             conn.execute(text("ALTER TABLE chats ADD COLUMN groups TEXT"))
 
-# Путь к базе данных относительно текущего файла (db.py)
-db_path = Path(__file__).resolve().parent.parent / 'app.db'
+def _make_engine():
+    database_url = (os.environ.get("DATABASE_URL") or "").strip()
+    if database_url:
+        if database_url.startswith("postgres://"):
+            database_url = "postgresql+psycopg2://" + database_url[
+                len("postgres://") :
+            ]
+        elif database_url.startswith("postgresql://"):
+            database_url = "postgresql+psycopg2://" + database_url[
+                len("postgresql://") :
+            ]
+        return create_engine(database_url, pool_pre_ping=True)
+    db_path = Path(__file__).resolve().parent.parent / "app.db"
+    sql_url = f"sqlite:///{db_path}"
+    return create_engine(sql_url, connect_args={"check_same_thread": False})
 
-# Строка подключения с использованием вычисленного пути
-SQL_URL = f"sqlite:///{db_path}"
 
-# Создаем движок для подключения к базе данных
-engine = create_engine(SQL_URL, connect_args={"check_same_thread": False})
+engine = _make_engine()
+SQL_URL = str(engine.url)
 
 # Создание локальной сессии
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

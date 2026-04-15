@@ -492,7 +492,7 @@ async def cb_last_ask(callback: CallbackQuery, bot: Bot) -> None:
     if not isinstance(msg, Message) or not msg.text:
         return
     await msg.edit_text(
-        msg.text + "\n\nВы уверены, что вы последний сдавший?",
+        msg.text + "\n\nВы уверены, что вы последний сдававший?",
         reply_markup=qc.kb_last_confirm(chat_id, mid),
     )
 
@@ -733,6 +733,17 @@ async def cb_formed_swap_accept(callback: CallbackQuery, bot: Bot) -> None:
         q.participants = order
         flag_modified(q, "participants")
         Q.merge_extra(db, q, {"formed_order": order})
+        # Синхронизируем последние позиции в queue_history для этой же очереди.
+        # Историю не пересоздаём: меняем только последний элемент у двух участников.
+        Q.sync_last_history_positions_after_swap(
+            db,
+            subject_id=q.subject_id,
+            first_tg_id=sw.from_tg_id,
+            first_new_pos_1based=ib + 1,
+            second_tg_id=sw.to_tg_id,
+            second_new_pos_1based=ia + 1,
+            commit=False,
+        )
         Q.mark_swap_done(db, sw)
         cht = sw.chat_id
         qmid = sw.queue_message_id

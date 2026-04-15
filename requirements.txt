@@ -30,4 +30,5 @@ yarl==1.22.0
 yookassa==3.5.0
 python-dateutil==2.9.0.post0
 SQLAlchemy==2.0.46
+psycopg2-binary==2.9.10
 tzdata
