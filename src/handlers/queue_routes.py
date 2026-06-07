@@ -156,7 +156,7 @@ async def cb_refuse_yes(callback: CallbackQuery, bot: Bot) -> None:
         return
     tg_id = callback.from_user.id
     with get_db() as db:
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if not q:
             return
         
@@ -222,7 +222,7 @@ async def cmd_add_to_formed(message: Message, bot: Bot) -> None:
     with get_db() as db:
         rmid = message.reply_to_message.message_id
         cid = message.chat.id
-        q = Q.get_queue_by_chat_message(db, cid, rmid)
+        q = Q.get_queue_by_chat_message(db, cid, rmid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value:
             await message.answer("Нужна сформированная очередь (ответьте на её сообщение).")
             return
@@ -259,7 +259,7 @@ async def cb_participate_add(callback: CallbackQuery) -> None:
     rn = callback.from_user.full_name
     with get_db() as db:
         Q.ensure_user(db, tg_id, un, rn)
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_PARTICIPANTS.value:
             await callback.answer("Запись уже закрыта.", show_alert=True)
             return
@@ -297,7 +297,7 @@ async def cb_participate_remove(callback: CallbackQuery) -> None:
     chat_id, mid = int(cid_s), int(mid_s)
     tg_id = callback.from_user.id
     with get_db() as db:
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if not q:
             await callback.answer("Очередь не найдена.", show_alert=True)
             return
@@ -340,7 +340,7 @@ async def cb_swap_request(callback: CallbackQuery, bot: Bot) -> None:
     rn = callback.from_user.full_name
     with get_db() as db:
         Q.ensure_user(db, tg_id, un, rn)
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if not q:
             await callback.answer("Очередь не найдена.", show_alert=True)
             return
@@ -441,7 +441,7 @@ async def cb_close_yes(callback: CallbackQuery, bot: Bot) -> None:
     if not isinstance(msg, Message):
         return
     with get_db() as db:
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if not q:
             return
         await qc.finalize_queue_core(bot, db, q, msg)
@@ -506,7 +506,7 @@ async def cb_del_yes(callback: CallbackQuery, bot: Bot) -> None:
     un = user.username if user else None
     who = f"@{un}" if un else f"id {user.id if user else '?'}"
     with get_db() as db:
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if q:
             Q.delete_queue_row(db, q)
     try:
@@ -555,7 +555,7 @@ async def cb_last_yes(callback: CallbackQuery) -> None:
     text = msg.text or ""
     base = text.split("\n\nВы уверены")[0]
     with get_db() as db:
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if not q:
             return
         try:
@@ -587,7 +587,7 @@ async def cb_add_end(callback: CallbackQuery) -> None:
     rn = callback.from_user.full_name
     with get_db() as db:
         Q.ensure_user(db, tg_id, un, rn)
-        q = Q.get_queue_by_chat_message(db, chat_id, mid)
+        q = Q.get_queue_by_chat_message(db, chat_id, mid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value:
             await callback.answer("Сейчас нельзя добавиться в конец.", show_alert=True)
             return
@@ -640,7 +640,7 @@ async def cmd_swap_formed(message: Message, bot: Bot) -> None:
             )
             return
 
-        q = Q.get_queue_by_chat_message(db, cid, rmid)
+        q = Q.get_queue_by_chat_message(db, cid, rmid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value:
             await message.answer("Нужна сформированная очередь (ответьте на её сообщение).")
             return
@@ -753,7 +753,7 @@ async def cb_formed_swap_accept(callback: CallbackQuery, bot: Bot) -> None:
                 show_alert=True,
             )
             return
-        q = Q.get_queue_by_chat_message(db, sw.chat_id, sw.queue_message_id)
+        q = Q.get_queue_by_chat_message(db, sw.chat_id, sw.queue_message_id, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value:
             await callback.answer("Очередь недоступна.", show_alert=True)
             return
@@ -790,7 +790,7 @@ async def cb_formed_swap_accept(callback: CallbackQuery, bot: Bot) -> None:
             pass
     if cht is not None and qmid is not None:
         with get_db() as db:
-            q2 = Q.get_queue_by_chat_message(db, cht, qmid)
+            q2 = Q.get_queue_by_chat_message(db, cht, qmid, for_update=True)
             if q2:
                 await qc.refresh_queue_message(bot, db, q2, None)
     await callback.answer("Места поменяны ✅")

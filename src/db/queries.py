@@ -188,18 +188,20 @@ def add_queue_row(
     return row
 
 
-def get_queue_by_message_id(db: Session, message_id: int) -> Queue | None:
-    return db.query(Queue).filter(Queue.message_id == message_id).first()
+def get_queue_by_message_id(db: Session, message_id: int, for_update: bool = False) -> Queue | None:
+    q = db.query(Queue).filter(Queue.message_id == message_id)
+    if for_update:
+        q = q.with_for_update()
+    return q.first()
 
 
 def get_queue_by_chat_message(
-    db: Session, chat_id: int, message_id: int
+    db: Session, chat_id: int, message_id: int, for_update: bool = False
 ) -> Queue | None:
-    return (
-        db.query(Queue)
-        .filter(Queue.chat_id == chat_id, Queue.message_id == message_id)
-        .first()
-    )
+    q = db.query(Queue).filter(Queue.chat_id == chat_id, Queue.message_id == message_id)
+    if for_update:
+        q = q.with_for_update()
+    return q.first()
 
 
 def get_queue_by_subject_lesson(
@@ -217,41 +219,44 @@ def get_queue_by_subject_lesson(
 
 
 def apply_slot_penalties_after_last_submitter(
-    db: Session, order: list[int | str], successful_slot_index: int, subject_id: int
+    db: Session, order: list[int | str], successful_slot_index: int, subject_id: int, pardoned_tg_ids: list[int] = None
 ) -> None:
-    """
-    Логика штрафов:
-    1. Участники со слотами <= successful_slot_index считаются 'успешными'.
-    2. Слоты > successful_slot_index считаются 'нереализованными'.
-    3. За каждый нереализованный слот удаляем запись из history_position.
-    4. +1 к missed_attempts_count только если у пользователя НЕТ успешных слотов в этой очереди.
-    """
+    if pardoned_tg_ids is None:
+        pardoned_tg_ids = []
+
     # 1. Кто успел подойти (хотя бы один слот до или на позиции последнего сдавшего)
     successful_uids = set()
     for i in range(successful_slot_index + 1):
         entry = order[i]
-        if isinstance(entry, int):
+        if isinstance(entry, int) and entry not in pardoned_tg_ids:
             successful_uids.add(entry)
 
-    # 2. Считаем нереализованные слоты (те, что после последнего сдавшего)
+    # 2. Считаем нереализованные слоты (те, что после последнего сдавшего ИЛИ прощенные)
     unrealized_counts: dict[int, int] = {}
-    for i in range(successful_slot_index + 1, len(order)):
+    for i in range(len(order)):
         entry = order[i]
         if isinstance(entry, int):
-            unrealized_counts[entry] = unrealized_counts.get(entry, 0) + 1
+            if i > successful_slot_index or entry in pardoned_tg_ids:
+                unrealized_counts[entry] = unrealized_counts.get(entry, 0) + 1
 
     # 3. Применяем изменения
-    for uid, count in unrealized_counts.items():
-        row = (
-            db.query(SubmissionAttempt)
-            .filter(
-                SubmissionAttempt.tg_id == uid,
-                SubmissionAttempt.subject_id == subject_id,
-            )
-            .first()
+    if not unrealized_counts:
+        return
+
+    # 3. Применяем изменения одним батчем
+    uids_to_update = list(unrealized_counts.keys())
+    rows = (
+        db.query(SubmissionAttempt)
+        .filter(
+            SubmissionAttempt.tg_id.in_(uids_to_update),
+            SubmissionAttempt.subject_id == subject_id,
         )
-        if not row:
-            continue
+        .all()
+    )
+
+    for row in rows:
+        uid = row.tg_id
+        count = unrealized_counts[uid]
 
         # Помечаем записи из истории как нереализованные (добавляем "M")
         hp = list(row.history_position or [])
@@ -281,7 +286,12 @@ def complete_queue_last_submitter(db: Session, q: Queue, tg_id: int) -> None:
     if not indices:
         raise ValueError("Пользователь не в очереди.")
     idx = indices[-1]
-    apply_slot_penalties_after_last_submitter(db, order, idx, q.subject_id)
+    
+    # Сохраняем индекс последнего сдавшего для будущих проверок
+    merge_extra(db, q, {"successful_slot_index": idx})
+    pardoned = q.extra.get("pardoned_tg_ids", [])
+    
+    apply_slot_penalties_after_last_submitter(db, order, idx, q.subject_id, pardoned)
     q.status = "completed"
     db.commit()
 

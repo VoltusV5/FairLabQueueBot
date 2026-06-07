@@ -215,3 +215,378 @@ async def cb_presence(callback: CallbackQuery, bot: Bot) -> None:
     except Exception as e:
         logger.warning("presence edit: %s", e)
     await callback.answer("Ок" if add else "Снято")
+
+
+@router.message(Command("set_starosta"))
+async def cmd_set_starosta(message: Message) -> None:
+    if message.chat.type == ChatType.PRIVATE:
+        await message.answer("Эта команда работает только в группах.")
+        return
+        
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].startswith("@"):
+        await message.answer("Формат: /set_starosta @username")
+        return
+    username = args[1][1:].strip()
+    
+    with get_db() as db:
+        from src.db.init_db import User
+        user = db.query(User).filter(User.tg_username.ilike(username)).first()
+        if not user:
+            await message.answer(f"Пользователь @{username} не найден в базе бота. Попросите его нажать /start в личных сообщениях с ботом.")
+            return
+            
+        chat = Q.ensure_chat(db, message.chat.id, message.chat.title)
+        admins = list(chat.admins or [])
+        if user.tg_id not in admins:
+            admins.append(user.tg_id)
+            chat.admins = admins
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(chat, "admins")
+            db.commit()
+            await message.answer(f"Пользователь @{username} назначен старостой группы.")
+        else:
+            await message.answer(f"Пользователь @{username} уже является старостой.")
+
+
+@router.message(Command("rm_starosta"))
+async def cmd_rm_starosta(message: Message) -> None:
+    if message.chat.type == ChatType.PRIVATE:
+        await message.answer("Эта команда работает только в группах.")
+        return
+        
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].startswith("@"):
+        await message.answer("Формат: /rm_starosta @username")
+        return
+    username = args[1][1:].strip()
+    
+    with get_db() as db:
+        from src.db.init_db import User
+        user = db.query(User).filter(User.tg_username.ilike(username)).first()
+        if not user:
+            await message.answer(f"Пользователь @{username} не найден в базе.")
+            return
+            
+        chat = Q.ensure_chat(db, message.chat.id, message.chat.title)
+        admins = list(chat.admins or [])
+        if user.tg_id in admins:
+            admins.remove(user.tg_id)
+            chat.admins = admins
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(chat, "admins")
+            db.commit()
+            await message.answer(f"Пользователь @{username} удалён из списка старост.")
+        else:
+            await message.answer("Этот пользователь не является старостой.")
+
+
+@router.message(Command("confirm"))
+async def cmd_confirm(message: Message) -> None:
+    if message.chat.type == ChatType.PRIVATE:
+        await message.answer("Эта команда работает только в группах.")
+        return
+    
+    if not message.reply_to_message:
+        await message.answer("Ответьте этой командой на сообщение с очередью.")
+        return
+    
+    from src.handlers.queue_common import subject_from_formed
+    subj_name = subject_from_formed(message.reply_to_message.text)
+    if not subj_name:
+        await message.answer("Ответьте на сообщение со сформированной очередью (где есть текст «Список на...»).")
+        return
+
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].startswith("@"):
+        await message.answer("Формат: /confirm @username")
+        return
+    username = args[1][1:].strip()
+    
+    with get_db() as db:
+        chat = Q.ensure_chat(db, message.chat.id, message.chat.title)
+        admins = chat.admins or []
+        if not admins:
+            await message.answer("В этой группе не назначен староста. Назначьте его командой /set_starosta @username")
+            return
+            
+        if message.from_user.id not in admins:
+            await message.answer("Только староста может использовать эту команду.")
+            return
+
+        from src.db.init_db import User, Subject, SubmissionAttempt, Queue
+        user = db.query(User).filter(User.tg_username.ilike(username)).first()
+        if not user:
+            await message.answer(f"Пользователь @{username} не найден в базе бота.")
+            return
+            
+        subj = db.query(Subject).filter(Subject.chat_id == message.chat.id, Subject.subject_name == subj_name).first()
+        if not subj:
+            await message.answer("Предмет не найден в этой группе.")
+            return
+            
+        q = db.query(Queue).filter(Queue.message_id == message.reply_to_message.message_id).first()
+        if not q:
+            await message.answer("Очередь не найдена в базе (возможно, сообщение было удалено).")
+            return
+            
+        if q.status == "waiting_for_last_participant":
+            p_ids = set((q.extra or {}).get("pardoned_tg_ids", []))
+            p_ids.add(user.tg_id)
+            Q.merge_extra(db, q, {"pardoned_tg_ids": list(p_ids)})
+            db.commit()
+            await message.answer(f"✅ Пользователь @{username} помилован. Когда очередь будет закрыта, он получит пропуск вместо штрафного подхода.")
+            
+        elif q.status == "completed":
+            ex = q.extra or {}
+            p_ids = ex.get("pardoned_tg_ids", [])
+            if user.tg_id in p_ids:
+                await message.answer("Этот пользователь уже был помилован.")
+                return
+                
+            order = list(ex.get("formed_order") or q.participants or [])
+            idx = -1
+            for i, x in enumerate(order):
+                if x == user.tg_id:
+                    idx = i
+            
+            if idx == -1:
+                await message.answer("Пользователь не участвовал в этой очереди.")
+                return
+                
+            successful_slot_index = ex.get("successful_slot_index", -1)
+            if idx > successful_slot_index and successful_slot_index != -1:
+                await message.answer("Пользователь и так находился после последнего сдававшего, поэтому уже получил пропуск.")
+                return
+                
+            row = db.query(SubmissionAttempt).filter(
+                SubmissionAttempt.tg_id == user.tg_id, 
+                SubmissionAttempt.subject_id == subj.id
+            ).first()
+            
+            if not row or not row.history_position:
+                await message.answer(f"У пользователя @{username} нет истории по этому предмету.")
+                return
+                
+            pos_1based = str(idx + 1)
+            hp = list(row.history_position)
+            last_idx = -1
+            for i in range(len(hp) - 1, -1, -1):
+                if hp[i] == pos_1based:
+                    last_idx = i
+                    break
+                    
+            if last_idx != -1:
+                hp[last_idx] = hp[last_idx] + "M"
+                row.history_position = hp
+                row.missed_attempts_count = int(row.missed_attempts_count or 0) + 1
+                
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(row, "history_position")
+                
+                p_ids_set = set(p_ids)
+                p_ids_set.add(user.tg_id)
+                Q.merge_extra(db, q, {"pardoned_tg_ids": list(p_ids_set)})
+                db.commit()
+                
+                await message.answer(f"✅ Успешный подход отменён задним числом. @{username} получил +1 к пропущенным слотам.")
+            else:
+                await message.answer("Не удалось найти соответствующую позицию в истории. Возможно, она уже была изменена.")
+        else:
+            await message.answer("Очередь находится в статусе, не подходящем для этой команды.")
+
+
+@router.message(Command("king"))
+async def cmd_king(message: Message) -> None:
+    if message.chat.type == ChatType.PRIVATE:
+        await message.answer("Эта команда работает только в группах.")
+        return
+        
+    args = (message.text or "").split(maxsplit=2)
+    if len(args) < 3 or not args[2].startswith("@"):
+        await message.answer("Формат: /king Название_предмета @username")
+        return
+        
+    subj_name = args[1].strip()
+    username = args[2][1:].strip()
+    
+    with get_db() as db:
+        from src.db.init_db import User, Subject
+        user = db.query(User).filter(User.tg_username.ilike(username)).first()
+        if not user:
+            await message.answer(f"Пользователь @{username} не найден в базе бота.")
+            return
+            
+        subj = db.query(Subject).filter(Subject.chat_id == message.chat.id, Subject.subject_name == subj_name).first()
+        if not subj:
+            await message.answer(f"Предмет «{subj_name}» не найден в этой группе.")
+            return
+            
+        kings = list(subj.kings or [])
+        if user.tg_id not in kings:
+            kings.append(user.tg_id)
+            subj.kings = kings
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(subj, "kings")
+            db.commit()
+            await message.answer(f"👑 Пользователь @{username} назначен командиром бригады по предмету «{subj_name}».")
+        else:
+            await message.answer(f"Пользователь @{username} уже является королём по этому предмету.")
+
+
+@router.message(Command("unking"))
+async def cmd_unking(message: Message) -> None:
+    if message.chat.type == ChatType.PRIVATE:
+        await message.answer("Эта команда работает только в группах.")
+        return
+        
+    args = (message.text or "").split(maxsplit=2)
+    if len(args) < 3 or not args[2].startswith("@"):
+        await message.answer("Формат: /unking Название_предмета @username")
+        return
+        
+    subj_name = args[1].strip()
+    username = args[2][1:].strip()
+    
+    with get_db() as db:
+        from src.db.init_db import User, Subject
+        user = db.query(User).filter(User.tg_username.ilike(username)).first()
+        if not user:
+            await message.answer(f"Пользователь @{username} не найден в базе бота.")
+            return
+            
+        subj = db.query(Subject).filter(Subject.chat_id == message.chat.id, Subject.subject_name == subj_name).first()
+        if not subj:
+            await message.answer(f"Предмет «{subj_name}» не найден в этой группе.")
+            return
+            
+        kings = list(subj.kings or [])
+        if user.tg_id in kings:
+            kings.remove(user.tg_id)
+            subj.kings = kings
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(subj, "kings")
+            db.commit()
+            await message.answer(f"Пользователь @{username} лишён статуса короля по предмету «{subj_name}».")
+        else:
+            await message.answer("Этот пользователь не является королём по этому предмету.")
+
+
+@router.message(Command("rm"))
+async def cmd_rm_queue(message: Message, bot: Bot) -> None:
+    if message.chat.type == ChatType.PRIVATE:
+        await message.answer("Эта команда работает только в группах.")
+        return
+        
+    if not message.reply_to_message:
+        await message.answer("Ответьте этой командой на сообщение с очередью.")
+        return
+        
+    with get_db() as db:
+        chat = Q.ensure_chat(db, message.chat.id, message.chat.title)
+        admins = chat.admins or []
+        if not admins:
+            await message.answer("В этой группе не назначен староста. Назначить можно командой: /set_starosta @username")
+            return
+            
+        if message.from_user.id not in admins:
+            await message.answer("Только староста может удалить очередь.")
+            return
+            
+        from src.db.init_db import Queue, SubmissionAttempt
+        q = db.query(Queue).filter(Queue.message_id == message.reply_to_message.message_id).first()
+        if not q:
+            await message.answer("Очередь не найдена в БД.")
+            return
+            
+        if q.status == "waiting_for_participants":
+            db.delete(q)
+            db.commit()
+            try:
+                await bot.edit_message_text(
+                    chat_id=q.chat_id,
+                    message_id=q.message_id,
+                    text=f"❌ Очередь отменена и удалена старостой @{message.from_user.username or message.from_user.first_name}.",
+                    reply_markup=None
+                )
+            except Exception:
+                pass
+            await message.answer(f"Очередь удалена @{message.from_user.username or message.from_user.first_name}.")
+            return
+            
+        ex = q.extra or {}
+        order = list(ex.get("formed_order") or q.participants or [])
+        pardoned = ex.get("pardoned_tg_ids", [])
+        successful_slot_index = ex.get("successful_slot_index", -1)
+        
+        # Fetch all relevant rows in one query to avoid N+1
+        uids = [entry for entry in order if isinstance(entry, int)]
+        rows = db.query(SubmissionAttempt).filter(
+            SubmissionAttempt.tg_id.in_(uids),
+            SubmissionAttempt.subject_id == q.subject_id
+        ).all()
+        rows_by_uid = {r.tg_id: r for r in rows}
+        
+        # Reverse history
+        for idx, entry in enumerate(order):
+            if not isinstance(entry, int):
+                continue
+                
+            row = rows_by_uid.get(entry)
+            if not row or not row.history_position:
+                continue
+                
+            hp = list(row.history_position)
+            target = str(idx + 1)
+            target_m = target + "M"
+            
+            last_idx = -1
+            found_target = None
+            
+            if q.status == "waiting_for_last_participant":
+                expected_target = target
+            elif q.status == "completed":
+                if idx <= successful_slot_index and entry not in pardoned:
+                    expected_target = target
+                else:
+                    expected_target = target_m
+            else:
+                expected_target = target
+                
+            for i in range(len(hp) - 1, -1, -1):
+                if hp[i] == expected_target:
+                    last_idx = i
+                    found_target = hp[i]
+                    break
+                    
+            if last_idx == -1:
+                other_target = target_m if expected_target == target else target
+                for i in range(len(hp) - 1, -1, -1):
+                    if hp[i] == other_target:
+                        last_idx = i
+                        found_target = hp[i]
+                        break
+            
+            if last_idx != -1:
+                hp.pop(last_idx)
+                row.history_position = hp
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(row, "history_position")
+                
+                if found_target.endswith("M") and q.status == "completed":
+                    row.missed_attempts_count = max(0, int(row.missed_attempts_count or 0) - 1)
+                    
+        db.delete(q)
+        db.commit()
+        
+        try:
+            await bot.edit_message_text(
+                chat_id=q.chat_id,
+                message_id=q.message_id,
+                text=f"❌ Очередь удалена старостой @{message.from_user.username or message.from_user.first_name}. Все записи в статистике отменены.",
+                reply_markup=None
+            )
+        except Exception:
+            pass
+            
+        await message.answer(f"Очередь удалена @{message.from_user.username or message.from_user.first_name}, статистика участников восстановлена.")

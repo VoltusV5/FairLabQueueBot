@@ -54,6 +54,8 @@ class Chat(Base):
     subscription_reminder_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Группы чата: [[tg_id1, tg_id2, ...], ...]
     groups: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Старосты (админы) чата: [tg_id1, tg_id2, ...]
+    admins: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class Subject(Base):
@@ -66,6 +68,8 @@ class Subject(Base):
     )
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     subject_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Короли бригад: [tg_id1, tg_id2, ...]
+    kings: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("chat_id", "subject_name", name="uq_chat_subject_name"),

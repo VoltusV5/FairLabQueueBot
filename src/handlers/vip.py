@@ -113,7 +113,7 @@ async def cmd_closeafter(message: Message) -> None:
     mid = message.reply_to_message.message_id
     cid = message.chat.id
     with get_db() as db:
-        q = Q.get_queue_by_chat_message(db, cid, mid)
+        q = Q.get_queue_by_chat_message(db, cid, mid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_PARTICIPANTS.value:
             await message.answer("Очередь в статусе набора не найдена.")
             return
@@ -162,7 +162,7 @@ async def cmd_closebefore(message: Message) -> None:
     cid = message.chat.id
     now_utc = datetime.utcnow()
     with get_db() as db:
-        q = Q.get_queue_by_chat_message(db, cid, mid)
+        q = Q.get_queue_by_chat_message(db, cid, mid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_PARTICIPANTS.value:
             await message.answer("Очередь в статусе набора не найдена.")
             return
@@ -202,6 +202,73 @@ async def cmd_closebefore(message: Message) -> None:
     await message.answer(
         f"Набор закроется не позже {qc.format_dt_msk_compact(until)} (МСК) — "
         f"за {tok[1]} до времени очереди.\n"
+        f"Изменил: {_actor_label(message)}"
+    )
+
+
+@router.message(Command("closeat"))
+async def cmd_closeat(message: Message) -> None:
+    if not message.reply_to_message or not message.text:
+        await message.answer("Ответьте этой командой на сообщение с активной очередью (набор открыт).")
+        return
+    tok = message.text.split()[1:]
+    if not tok:
+        await message.answer("Пример: /closeat 15.04 14:30 или /closeat 14:30")
+        return
+        
+    now_utc = datetime.utcnow()
+    now_msk = now_utc + timedelta(hours=3)
+    
+    fake_parts = ["dummy"] + tok
+    try:
+        _, d, t = parse_subject_datetime_tokens(fake_parts, now_msk)
+        if d is None and t is None:
+             await message.answer("Не удалось разобрать дату/время.")
+             return
+        until_msk = parse_date_time_tokens(d, t, now_msk)
+        until_utc = until_msk - timedelta(hours=3)
+    except Exception as e:
+        await message.answer(f"Ошибка формата времени: {e}")
+        return
+        
+    if until_utc <= now_utc:
+        await message.answer("Указанное время уже в прошлом.")
+        return
+
+    mid = message.reply_to_message.message_id
+    cid = message.chat.id
+    
+    with get_db() as db:
+        q = Q.get_queue_by_chat_message(db, cid, mid, for_update=True)
+        if not q or q.status != qc.QueueStatus.WAITING_FOR_PARTICIPANTS.value:
+            await message.answer("Очередь в статусе набора не найдена.")
+            return
+            
+        q.close_at = until_utc
+        Q.merge_extra(db, q, {"manual_closeafter": True, "autoclose_disabled": False})
+        subj_row = Q.get_subject_by_id(db, q.subject_id)
+        if subj_row:
+            ex = q.extra or {}
+            head = qc.header_waiting(
+                subj_row.subject_name,
+                q.lesson_date,
+                q.close_at,
+                participants_count=len(q.participants or []),
+                implicit_lesson=bool(ex.get("implicit_lesson", False)),
+            )
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=cid,
+                    message_id=mid,
+                    text=head,
+                    reply_markup=qc.kb_recruit(cid, mid),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+                
+    await message.answer(
+        f"Набор закроется {qc.format_dt_msk_compact(until_utc)} (МСК).\n"
         f"Изменил: {_actor_label(message)}"
     )
 
@@ -312,7 +379,7 @@ async def cmd_insert(message: Message, bot: Bot) -> None:
             return
 
         rmid = message.reply_to_message.message_id
-        q = Q.get_queue_by_chat_message(db, message.chat.id, rmid)
+        q = Q.get_queue_by_chat_message(db, message.chat.id, rmid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value:
             await message.answer("Нужна сформированная очередь.")
             return
@@ -339,7 +406,7 @@ async def cmd_last_formed(message: Message, bot: Bot) -> None:
             return
             
         rmid = message.reply_to_message.message_id
-        q = Q.get_queue_by_chat_message(db, message.chat.id, rmid)
+        q = Q.get_queue_by_chat_message(db, message.chat.id, rmid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value:
             await message.answer("Нужна сформированная очередь.")
             return
@@ -381,7 +448,7 @@ async def cmd_shuffle_formed(message: Message, bot: Bot) -> None:
         if not has_supervip(effective_access(chat)):
             await message.answer("Нужна подписка SuperVIP.")
             return
-        q = Q.get_queue_by_chat_message(db, message.chat.id, mid)
+        q = Q.get_queue_by_chat_message(db, message.chat.id, mid, for_update=True)
         if not q or q.status != qc.QueueStatus.WAITING_FOR_LAST_PARTICIPANT.value:
             await message.answer("Нужна сформированная очередь.")
             return

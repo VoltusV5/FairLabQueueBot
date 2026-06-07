@@ -92,19 +92,24 @@ def order_tg_ids(db: Session, participant_tg_ids: list[int], subject_id: int, ch
 
 
 def format_queue_lines(
-    db: Session, ordered_tg_ids: list[int | str], refused_slot_indices: set[int]
+    db: Session, ordered_tg_ids: list[int | str], refused_slot_indices: set[int], kings: list[int] = None
 ) -> str:
+    if kings is None:
+        kings = []
     lines = []
     for idx, entry in enumerate(ordered_tg_ids):
+        is_king = False
         if isinstance(entry, int):
             label = Q.get_user_display(db, entry)
+            is_king = entry in kings
         else:
             # Временный участник (строка)
             label = str(entry)
         # Экранируем спецсимволы HTML
         label = label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         suffix = " (отказался от участия в очереди)" if idx in refused_slot_indices else ""
-        lines.append(f"{idx + 1}. {label}{suffix}")
+        king_suffix = " 👑" if is_king else ""
+        lines.append(f"{idx + 1}. {label}{king_suffix}{suffix}")
     return "\n".join(lines) + ("\n" if lines else "")
 
 

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -31,6 +32,29 @@ class QueueStatus(str, Enum):
 
 def split_cb(data: str) -> list[str]:
     return data.split("|")
+
+
+async def safe_edit_text(bot: Bot, chat_id: int, message_id: int, text: str, reply_markup=None, parse_mode=None) -> None:
+    for _ in range(2):
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+            return
+        except TelegramRetryAfter as e:
+            logger.warning("Flood control. Retry in %s s.", e.retry_after)
+            await asyncio.sleep(e.retry_after)
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                logger.warning("safe_edit_text bad request: %s", e)
+            return
+        except Exception as e:
+            logger.warning("safe_edit_text exception: %s", e)
+            return
 
 
 def kb_recruit(chat_id: int, msg_id: int) -> InlineKeyboardMarkup:
@@ -254,16 +278,9 @@ async def schedule_confirm_reset(
         await asyncio.sleep(30)
         if pending_confirmations.get(key, {}).get("kind") != kind:
             return
-        try:
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=original_text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception:
-            pass
+        await safe_edit_text(
+            bot, chat_id, message_id, original_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+        )
         pending_confirmations.pop(key, None)
 
     t = asyncio.create_task(_job())
@@ -316,41 +333,24 @@ async def finalize_queue_core(
         },
     )
     ds, ts = fmt_dt(q.lesson_date)
-    body = queue_manager.format_queue_lines(db, ordered, refused_slots)
+    kings = subj_row.kings or [] if 'subj_row' in locals() else getattr(Q.get_subject_by_id(db, q.subject_id), 'kings', [])
+    body = queue_manager.format_queue_lines(db, ordered, refused_slots, kings)
     head = f"<b>Список на {subj_name}</b>\n📅 {ds}\n⏰ {ts}\n"
     text = head + "\n" + body
     cid = message.chat.id if message else q.chat_id
     kb = kb_after_formed(cid, mid)
     if message:
-        await message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        try:
-            await message.bot.edit_message_reply_markup(
-                chat_id=cid,
-                message_id=mid,
-                reply_markup=kb,
-            )
-        except Exception:
-            pass
+        await safe_edit_text(message.bot, cid, mid, text, reply_markup=kb, parse_mode=ParseMode.HTML)
     else:
-        try:
-            await bot.edit_message_text(
-                chat_id=cid,
-                message_id=mid,
-                text=text,
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            logger.warning("finalize_queue_core edit_message_text: %s", e)
-            return
-        try:
-            await bot.edit_message_reply_markup(
-                chat_id=cid,
-                message_id=mid,
-                reply_markup=kb,
-            )
-        except Exception:
-            pass
+        await safe_edit_text(bot, cid, mid, text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=cid,
+            message_id=mid,
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
 
 
 async def refresh_queue_message(
@@ -363,27 +363,18 @@ async def refresh_queue_message(
     ordered = ex.get("formed_order") or q.participants or []
     refused_slots = refused_slots_for_formed(ex)
     ds, ts = fmt_dt(q.lesson_date)
-    body = queue_manager.format_queue_lines(db, list(ordered), refused_slots)
+    kings = subj_row.kings or []
+    body = queue_manager.format_queue_lines(db, list(ordered), refused_slots, kings)
     subj_name = escape_html_text(subj_row.subject_name)
     head = f"<b>Список на {subj_name}</b>\n📅 {ds}\n⏰ {ts}\n"
     cid = message.chat.id if message else q.chat_id
     mid = message.message_id if message else q.message_id
     kb = kb_after_formed(cid, mid)
     full = head + "\n" + body
-    try:
-        if message:
-            await message.edit_text(full, reply_markup=kb, parse_mode=ParseMode.HTML)
-        else:
-            await bot.edit_message_text(
-                chat_id=cid,
-                message_id=mid,
-                text=full,
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML,
-            )
-    except Exception as e:
-        logger.warning("refresh_queue_message edit: %s", e)
-        return
+    if message:
+        await safe_edit_text(message.bot, cid, mid, full, reply_markup=kb, parse_mode=ParseMode.HTML)
+    else:
+        await safe_edit_text(bot, cid, mid, full, reply_markup=kb, parse_mode=ParseMode.HTML)
     try:
         await bot.edit_message_reply_markup(
             chat_id=cid,
