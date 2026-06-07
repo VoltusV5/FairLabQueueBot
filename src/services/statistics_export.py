@@ -30,9 +30,10 @@ def build_user_stats_text(db: Session, tg_id: int) -> str:
     lines.append("📊 Статистика по предметам:")
     for sa, subj in rows:
         hp = sa.history_position or []
-        approaches = len(hp)
+        successful_hp = [int(x) for x in hp if not str(x).endswith("M")]
+        approaches = len(successful_hp)
         missed = sa.missed_attempts_count
-        avg_pos = sum(int(x) for x in hp) / approaches if approaches else 0
+        avg_pos = sum(successful_hp) / approaches if approaches else 0
         lines.append(f"\n📘 {subj.subject_name}:")
         lines.append(f"  └ ✅ Успешных сдач: {approaches}")
         lines.append(f"  └ ⚠️ Пропусков/отказов: {missed}")

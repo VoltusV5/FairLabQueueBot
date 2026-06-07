@@ -64,6 +64,7 @@ def ensure_chat(db: Session, chat_id: int, title: str | None = None) -> Chat:
                 subscription_tier="supervip",
                 trial_ends_at=None,
                 subscription_ends_at=now + relativedelta(months=1),
+                autoclose_enabled=False,
             )
         else:
             c = Chat(
@@ -72,6 +73,7 @@ def ensure_chat(db: Session, chat_id: int, title: str | None = None) -> Chat:
                 subscription_tier="trial",
                 trial_ends_at=now + timedelta(days=TRIAL_DAYS),
                 subscription_ends_at=None,
+                autoclose_enabled=False,
             )
         db.add(c)
         db.commit()
@@ -90,6 +92,16 @@ def get_chat(db: Session, chat_id: int) -> Chat | None:
 
 def list_all_chats(db: Session):
     return db.query(Chat).all()
+
+
+def list_subject_names_for_chat(db: Session, chat_id: int) -> list[str]:
+    rows = (
+        db.query(Subject.subject_name)
+        .filter(Subject.chat_id == chat_id)
+        .order_by(func.lower(Subject.subject_name))
+        .all()
+    )
+    return [str(r[0]) for r in rows]
 
 
 def set_chat_autoclose_rules(db: Session, chat_id: int, rules: list | None) -> None:
@@ -241,11 +253,15 @@ def apply_slot_penalties_after_last_submitter(
         if not row:
             continue
 
-        # Удаляем записи из истории за каждый нереализованный слот
+        # Помечаем записи из истории как нереализованные (добавляем "M")
         hp = list(row.history_position or [])
-        for _ in range(count):
-            if hp:
-                hp.pop()
+        marked = 0
+        for i in range(len(hp) - 1, -1, -1):
+            if marked >= count:
+                break
+            if not str(hp[i]).endswith("M"):
+                hp[i] = str(hp[i]) + "M"
+                marked += 1
         row.history_position = hp
         flag_modified(row, "history_position")
 

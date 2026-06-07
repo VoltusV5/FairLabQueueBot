@@ -47,7 +47,7 @@ class Chat(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     # Глобальный переключатель автозакрытия для новых очередей (/auto)
-    autoclose_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    autoclose_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Кастомные правила (/newautorule), иначе None — дефолт из compute_default_autoclose
     autoclose_rules: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Напоминания о подписке: {"deadline_iso": "...", "d3": bool, "d1": bool}

@@ -1,4 +1,4 @@
-"""Команды SuperVIP и настройки чата: /group, /insert, /last, /shuffle, /newautorule, /auto, /closeafter, /changename."""
+"""Команды SuperVIP и настройки чата: /group, /insert, /last, /shuffle, /newautorule, /auto, /closeafter, /closebefore, /changename."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import random
 from datetime import datetime, timedelta
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ParseMode
 from aiogram.enums import MessageEntityType
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -28,6 +29,14 @@ from src.utils.telegram_text import text_without_text_mentions
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+def _actor_label(message: Message) -> str:
+    if not message.from_user:
+        return "неизвестный пользователь"
+    if message.from_user.username:
+        return f"@{message.from_user.username}"
+    return message.from_user.full_name or str(message.from_user.id)
 
 
 def _first_mention_tg_id(message: Message) -> int | None:
@@ -99,7 +108,8 @@ async def cmd_closeafter(message: Message) -> None:
     if dur is None:
         await message.answer("Не удалось разобрать длительность. Используйте суффиксы 'м' или 'ч' (например, 30м, 2ч).")
         return
-    until = datetime.utcnow() + timedelta(minutes=dur)
+    now_utc = datetime.utcnow()
+    until = now_utc + timedelta(minutes=dur)
     mid = message.reply_to_message.message_id
     cid = message.chat.id
     with get_db() as db:
@@ -109,8 +119,90 @@ async def cmd_closeafter(message: Message) -> None:
             return
         q.close_at = until
         Q.merge_extra(db, q, {"manual_closeafter": True, "autoclose_disabled": False})
+        subj_row = Q.get_subject_by_id(db, q.subject_id)
+        if subj_row:
+            ex = q.extra or {}
+            head = qc.header_waiting(
+                subj_row.subject_name,
+                q.lesson_date,
+                q.close_at,
+                participants_count=len(q.participants or []),
+                implicit_lesson=bool(ex.get("implicit_lesson", False)),
+            )
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=cid,
+                    message_id=mid,
+                    text=head,
+                    reply_markup=qc.kb_recruit(cid, mid),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
     await message.answer(
-        f"Набор закроется не раньше {qc.format_dt_msk_compact(until)} (МСК)."
+        f"Набор закроется не раньше {qc.format_dt_msk_compact(until)} (МСК).\n"
+        f"Изменил: {_actor_label(message)}"
+    )
+
+
+@router.message(Command("closebefore"))
+async def cmd_closebefore(message: Message) -> None:
+    if not message.reply_to_message or not message.text:
+        await message.answer("Ответьте этой командой на сообщение с активной очередью (набор открыт).")
+        return
+    tok = message.text.split()
+    if len(tok) < 2:
+        await message.answer("Пример: /closebefore 30м  или  /closebefore 2ч")
+        return
+    dur = parse_duration_minutes(tok[1])
+    if dur is None:
+        await message.answer("Не удалось разобрать длительность. Используйте суффиксы 'м' или 'ч' (например, 30м, 2ч).")
+        return
+    mid = message.reply_to_message.message_id
+    cid = message.chat.id
+    now_utc = datetime.utcnow()
+    with get_db() as db:
+        q = Q.get_queue_by_chat_message(db, cid, mid)
+        if not q or q.status != qc.QueueStatus.WAITING_FOR_PARTICIPANTS.value:
+            await message.answer("Очередь в статусе набора не найдена.")
+            return
+        until = q.lesson_date - timedelta(minutes=dur)
+        if until <= now_utc:
+            await message.answer(
+                "Время закрытия уже в прошлом (или прямо сейчас). "
+                "Уменьшите интервал для /closebefore или используйте /closeafter."
+            )
+            return
+        q.close_at = until
+        Q.merge_extra(
+            db,
+            q,
+            {"manual_closebefore": True, "autoclose_disabled": False},
+        )
+        subj_row = Q.get_subject_by_id(db, q.subject_id)
+        if subj_row:
+            ex = q.extra or {}
+            head = qc.header_waiting(
+                subj_row.subject_name,
+                q.lesson_date,
+                q.close_at,
+                participants_count=len(q.participants or []),
+                implicit_lesson=bool(ex.get("implicit_lesson", False)),
+            )
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=cid,
+                    message_id=mid,
+                    text=head,
+                    reply_markup=qc.kb_recruit(cid, mid),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+    await message.answer(
+        f"Набор закроется не позже {qc.format_dt_msk_compact(until)} (МСК) — "
+        f"за {tok[1]} до времени очереди.\n"
+        f"Изменил: {_actor_label(message)}"
     )
 
 

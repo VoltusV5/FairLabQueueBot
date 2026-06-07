@@ -77,7 +77,11 @@ async def cmd_queue(message: Message) -> None:
             }
 
             head = qc.header_waiting(
-                subj_name, lesson_dt_utc, auto_close_utc, implicit_lesson=implicit_lesson
+                subj_name,
+                lesson_dt_utc,
+                auto_close_utc,
+                participants_count=0,
+                implicit_lesson=implicit_lesson,
             )
             sent = await message.answer(
                 head,
@@ -167,7 +171,6 @@ async def cb_refuse_yes(callback: CallbackQuery, bot: Bot) -> None:
             slots = set(ex.get("refused_slot_indices", []) or [])
             slots.add(li)
             Q.merge_extra(db, q, {"refused_slot_indices": sorted(slots)})
-            Q.increment_missed_for_tg_ids(db, [tg_id], q.subject_id)
             msg = callback.message
             if isinstance(msg, Message):
                 await qc.refresh_queue_message(bot, db, q, msg)
@@ -182,7 +185,6 @@ async def cb_refuse_yes(callback: CallbackQuery, bot: Bot) -> None:
             rids.add(tg_id)
             ex["refused_ids"] = list(rids)
             Q.merge_extra(db, q, ex)
-            Q.increment_missed_for_tg_ids(db, [tg_id], q.subject_id)
             await callback.answer(_REFUSE_DONE, show_alert=False)
             msg = callback.message
             if isinstance(msg, Message):
@@ -271,6 +273,21 @@ async def cb_participate_add(callback: CallbackQuery) -> None:
         if rc == -1:
             await callback.answer("Вы уже в списке.", show_alert=True)
             return
+        subj = Q.get_subject_by_id(db, q.subject_id)
+        if subj and isinstance(callback.message, Message):
+            ex = q.extra or {}
+            head = qc.header_waiting(
+                subj.subject_name,
+                q.lesson_date,
+                q.close_at,
+                participants_count=len(q.participants or []),
+                implicit_lesson=bool(ex.get("implicit_lesson", False)),
+            )
+            await callback.message.edit_text(
+                head,
+                reply_markup=qc.kb_recruit(chat_id, mid),
+                parse_mode=ParseMode.HTML,
+            )
     await callback.answer("Вы записаны ✅")
 
 
@@ -284,6 +301,9 @@ async def cb_participate_remove(callback: CallbackQuery) -> None:
         if not q:
             await callback.answer("Очередь не найдена.", show_alert=True)
             return
+        if q.status != qc.QueueStatus.WAITING_FOR_PARTICIPANTS.value:
+            await callback.answer("Запись уже закрыта.", show_alert=True)
+            return
         Q.remove_participant(db, q, tg_id)
         ex = q.extra or {}
         rid = set(ex.get("refused_ids", []))
@@ -291,6 +311,21 @@ async def cb_participate_remove(callback: CallbackQuery) -> None:
             rid.discard(tg_id)
             ex["refused_ids"] = list(rid)
             Q.merge_extra(db, q, ex)
+        subj = Q.get_subject_by_id(db, q.subject_id)
+        if subj and isinstance(callback.message, Message):
+            ex = q.extra or {}
+            head = qc.header_waiting(
+                subj.subject_name,
+                q.lesson_date,
+                q.close_at,
+                participants_count=len(q.participants or []),
+                implicit_lesson=bool(ex.get("implicit_lesson", False)),
+            )
+            await callback.message.edit_text(
+                head,
+                reply_markup=qc.kb_recruit(chat_id, mid),
+                parse_mode=ParseMode.HTML,
+            )
     await callback.answer("Участие отменено ❌")
 
 

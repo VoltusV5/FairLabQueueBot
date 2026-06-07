@@ -196,6 +196,7 @@ def header_waiting(
     lesson: datetime,
     close_at: datetime | None,
     *,
+    participants_count: int = 0,
     implicit_lesson: bool = False,
 ) -> str:
     ds, ts = fmt_dt(lesson)
@@ -211,7 +212,8 @@ def header_waiting(
         f"📘 <b>Запись на {subject}</b>\n"
         f"📅 {ds}\n"
         f"⏰ {ts}\n"
-        f"⏱️ Автозакрытие записи: {auto}"
+        f"⏱️ Автозакрытие записи: {auto}\n"
+        f"👥 Участвуют: {participants_count}"
     )
 
 

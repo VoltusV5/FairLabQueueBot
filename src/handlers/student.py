@@ -1,4 +1,4 @@
-"""Личка: старт, статистика, меню «на паре»; в группах: /attendance."""
+"""Личка: старт, статистика, меню «на паре»; в группах: /who."""
 
 from __future__ import annotations
 
@@ -47,14 +47,26 @@ def _attendance_kb(chat_id: int, message_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def _presence_text(here_ids: list[int], db) -> str:
-    lines = ["👥 Кто сейчас на паре?", ""]
+def _presence_text(here_ids: list[int], db, subject_name: str | None = None) -> str:
+    if subject_name:
+        lines = [f"👥 Кто сейчас на паре по {subject_name}?", ""]
+    else:
+        lines = ["👥 Кто сейчас на паре?", ""]
     if not here_ids:
         lines.append("Пока никого.")
     else:
         for i, tid in enumerate(here_ids, 1):
             lines.append(f"{i}. {Q.get_user_display(db, tid)}")
     return "\n".join(lines)
+
+
+def _extract_presence_subject(text: str | None) -> str | None:
+    first = (text or "").splitlines()[0].strip() if (text or "").splitlines() else ""
+    pref = "👥 Кто сейчас на паре по "
+    if first.startswith(pref) and first.endswith("?"):
+        subj = first[len(pref):-1].strip()
+        return subj or None
+    return None
 
 
 @router.message(CommandStart())
@@ -82,7 +94,7 @@ async def menu_attendance_hint(message: Message) -> None:
     if message.chat.type != ChatType.PRIVATE:
         return
     await message.answer(
-        "В групповом чате отправьте команду /attendance — "
+        "В групповом чате отправьте команду /who — "
         "бот опубликует опрос «Кто сейчас на паре?»."
     )
 
@@ -90,6 +102,33 @@ async def menu_attendance_hint(message: Message) -> None:
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(LEXICON_RU["/help"])
+
+
+@router.message(Command("subjects"))
+async def cmd_subjects(message: Message) -> None:
+    parts = (message.text or "").split()
+    target_chat_id = message.chat.id
+
+    if message.chat.type == ChatType.PRIVATE:
+        if len(parts) < 2:
+            await message.answer("В личке используйте: /subjects <id_чата>")
+            return
+        try:
+            target_chat_id = int(parts[1])
+        except ValueError:
+            await message.answer("Некорректный id чата. Пример: /subjects -1001234567890")
+            return
+
+    with get_db() as db:
+        Q.ensure_chat(db, target_chat_id, message.chat.title)
+        subjects = Q.list_subject_names_for_chat(db, target_chat_id)
+    if not subjects:
+        await message.answer("Для этого чата пока нет созданных предметов.")
+        return
+    lines = [f"📚 Предметы чата {target_chat_id}:"]
+    for i, name in enumerate(subjects, 1):
+        lines.append(f"{i}. {name}")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("stat"))
@@ -121,14 +160,21 @@ async def cmd_stat(message: Message, bot: Bot) -> None:
 
 
 @router.message(Command("attendance"))
-async def cmd_attendance(message: Message, bot: Bot) -> None:
+async def cmd_attendance_obsolete(message: Message) -> None:
+    await message.answer("Команда /attendance была заменена на /who.")
+
+
+@router.message(Command("who"))
+async def cmd_who(message: Message, bot: Bot) -> None:
     if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
-        await message.answer("Команда /attendance только в группе.")
+        await message.answer("Команда /who только в группе.")
         return
     cid = message.chat.id
+    tokens = (message.text or "").split(maxsplit=1)
+    subject_name = tokens[1].strip() if len(tokens) > 1 else None
     with get_db() as db:
         Q.ensure_chat(db, cid, message.chat.title)
-        empty = _presence_text([], db)
+        empty = _presence_text([], db, subject_name)
     sent = await message.answer(empty)
     mid = sent.message_id
     await bot.edit_message_reply_markup(
@@ -154,7 +200,8 @@ async def cb_presence(callback: CallbackQuery, bot: Bot) -> None:
         changed = Q.upsert_presence_here(db, cid, mid, tg_id, add)
         row = Q.get_presence_poll(db, cid, mid)
         here = list(row.here_tg_ids if row else [])
-        text = _presence_text(here, db)
+        subj = _extract_presence_subject(callback.message.text if isinstance(callback.message, Message) else None)
+        text = _presence_text(here, db, subj)
     if not changed:
         await callback.answer("Уже учтено." if add else "Вас не было в списке.")
         return

@@ -29,10 +29,21 @@ def order_tg_ids(db: Session, participant_tg_ids: list[int], subject_id: int, ch
     for uid in unique_ids:
         row = Q.ensure_submission_row(db, uid, subject_id)
         hp = row.history_position or []
+        successful_hp = [int(x) for x in hp if not str(x).endswith("M")]
+        missed_hp = [int(str(x)[:-1]) for x in hp if str(x).endswith("M")]
+        
+        approaches = len(successful_hp)
+        if approaches == 0:
+            avg_pos = sum(missed_hp) / len(missed_hp) if missed_hp else 0.0
+            sort_avg_pos = avg_pos
+        else:
+            avg_pos = sum(successful_hp) / len(successful_hp) if successful_hp else 0.0
+            sort_avg_pos = -avg_pos
+
         user_data[uid] = {
-            "approaches": len(hp),
+            "approaches": approaches,
             "missed": row.missed_attempts_count or 0,
-            "avg_pos": sum(int(x) for x in hp) / len(hp) if hp else 0.0,
+            "sort_avg_pos": sort_avg_pos,
             "tie": randint(0, 100_000)
         }
 
@@ -62,7 +73,7 @@ def order_tg_ids(db: Session, participant_tg_ids: list[int], subject_id: int, ch
     for uid in unique_ids:
         if uid not in assigned_uids:
             d = user_data[uid]
-            blocks.append(((d["approaches"], -d["missed"], -d["avg_pos"], d["tie"]), [uid]))
+            blocks.append(((d["approaches"], -d["missed"], d["sort_avg_pos"], d["tie"]), [uid]))
             
     # Сортируем блоки
     blocks.sort(key=lambda x: x[0])
@@ -74,7 +85,7 @@ def order_tg_ids(db: Session, participant_tg_ids: list[int], subject_id: int, ch
         # Но если это группа, внутри неё тоже можно отсортировать по личным заслугам,
         # чтобы внутри блока был порядок по подходам/пропускам.
         if len(uids) > 1:
-            uids.sort(key=lambda u: (user_data[u]["approaches"], -user_data[u]["missed"], -user_data[u]["avg_pos"], user_data[u]["tie"]))
+            uids.sort(key=lambda u: (user_data[u]["approaches"], -user_data[u]["missed"], user_data[u]["sort_avg_pos"], user_data[u]["tie"]))
         final_order.extend(uids)
         
     return final_order

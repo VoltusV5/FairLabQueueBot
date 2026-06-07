@@ -36,7 +36,7 @@ def _migrate_sqlite_schema(engine) -> None:
         if "autoclose_enabled" not in cols:
             conn.execute(
                 text(
-                    "ALTER TABLE chats ADD COLUMN autoclose_enabled INTEGER NOT NULL DEFAULT 1"
+                    "ALTER TABLE chats ADD COLUMN autoclose_enabled INTEGER NOT NULL DEFAULT 0"
                 )
             )
         if "autoclose_rules" not in cols:
