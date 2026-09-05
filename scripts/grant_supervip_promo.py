@@ -9,9 +9,9 @@ Rule:
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
-import sys
 
 from dateutil.relativedelta import relativedelta
 
@@ -19,14 +19,16 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.db.db import get_db
-from src.db.init_db import Chat
+from src.db.db import get_db  # noqa: E402
+from src.db.init_db import Chat  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
+    """Парсинг аргументов командной строки."""
     parser = argparse.ArgumentParser(
         description=(
-            "Grant 1 month SuperVIP instead of trial for chats created before cutoff date."
+            "Grant 1 month SuperVIP instead of trial for chats "
+            "created before cutoff date."
         )
     )
     parser.add_argument(
@@ -43,8 +45,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Основная функция выполнения промо-скрипта."""
     args = parse_args()
-    cutoff = datetime.strptime(args.cutoff_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    cutoff = datetime.strptime(args.cutoff_date, "%Y-%m-%d").replace(
+        tzinfo=UTC
+    )
     now = datetime.now(UTC).replace(tzinfo=None)
     cutoff_naive = cutoff.replace(tzinfo=None)
     new_deadline = now + relativedelta(months=1)
@@ -60,7 +65,8 @@ def main() -> int:
         )
 
         print(
-            f"[promo] cutoff<{args.cutoff_date}, trial chats found: {len(candidates)}"
+            f"[promo] cutoff<{args.cutoff_date}, trial chats found: "
+            f"{len(candidates)}"
         )
         for chat in candidates:
             title = (chat.title or "").strip()
@@ -70,7 +76,9 @@ def main() -> int:
             )
 
         if not args.apply:
-            print("[promo] dry-run only. Re-run with --apply to persist changes.")
+            print(
+                "[promo] dry-run only. Re-run with --apply to persist changes."
+            )
             return 0
 
         for chat in candidates:
@@ -89,4 +97,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

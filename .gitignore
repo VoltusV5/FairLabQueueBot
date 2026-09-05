@@ -134,3 +134,6 @@ dmypy.json
 
 .idea
 *.db
+
+docs/
+AI_RULES.md

@@ -1,0 +1,44 @@
+# Git & CI/CD
+.git
+.github
+.gitignore
+
+# Python bytecode & cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Environment files & Virtualenvs
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+env/
+
+# Tests & Linters
+tests/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.bandit
+.pre-commit-config.yaml
+
+# IDE & Editor artifacts
+.idea/
+.vscode/
+.gemini/
+*.swp
+*.swo
+
+# Project docs & scripts
+docs/
+scripts/
+*.md

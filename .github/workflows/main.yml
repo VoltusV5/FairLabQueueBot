@@ -1,0 +1,150 @@
+name: FairLabQueueBot CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  tests_and_lint:
+    name: Lint, Type Check & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_password
+          POSTGRES_DB: fairqueue_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -r requirements.txt
+          pip install ruff mypy bandit pytest pytest-asyncio
+
+      - name: Lint with Ruff
+        run: |
+          python -m ruff check .
+
+      - name: Type check with Mypy
+        run: |
+          python -m mypy src
+
+      - name: Security audit with Bandit
+        run: |
+          python -m bandit -c .bandit -r src
+
+      - name: Run Pytest
+        env:
+          BOT_TOKEN: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+          SUPER_ADMINS: "123,456"
+          LOG_LEVEL: "INFO"
+          LOG_FORMAT: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+          DATABASE_URL: "postgresql+asyncpg://postgres:postgres_password@localhost:5432/fairqueue_test"
+        run: |
+          python -m pytest tests/ -v
+
+  build_and_push_to_docker_hub:
+    name: Push Docker image to DockerHub
+    runs-on: ubuntu-latest
+    needs: tests_and_lint
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/fairlabqueuebot:latest
+            ${{ secrets.DOCKER_USERNAME }}/fairlabqueuebot:${{ github.sha }}
+
+  deploy:
+    name: Deploy Application to Server
+    runs-on: ubuntu-latest
+    needs: build_and_push_to_docker_hub
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Copy deployment files via SCP
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "docker-compose.prod.yml"
+          target: "~/fairlabqueuebot"
+
+      - name: Execute Remote SSH Commands to Deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ~/fairlabqueuebot
+            DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }} docker compose -f docker-compose.prod.yml pull
+            DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }} docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -f
+
+  send_message:
+    name: Send Telegram Notification
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Send Message via Telegram Bot
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            🚀 Деплой FairLabQueueBot успешно выполнен!
+            
+            Ветка: ${{ github.ref_name }}
+            Коммит: ${{ github.sha }}
+            Автор: ${{ github.actor }}

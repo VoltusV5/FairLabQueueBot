@@ -7,8 +7,7 @@ annotated-types==0.7.0
 attrs==25.4.0
 certifi==2026.1.4
 environs==14.5.0
-flake8==5.0.4
-flake8-docstrings==1.7.0
+ruff==0.4.10
 frozenlist==1.8.0
 idna==3.11
 magic-filter==1.0.12
@@ -30,5 +29,6 @@ yarl==1.22.0
 yookassa==3.5.0
 python-dateutil==2.9.0.post0
 SQLAlchemy==2.0.46
-psycopg2-binary==2.9.10
+asyncpg==0.30.0
+alembic==1.14.0
 tzdata

@@ -1,0 +1,64 @@
+[project]
+name = "my-bot-project"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+# ==============================================================================
+# RUFF (Линтер и форматировщик)
+# ==============================================================================
+
+[tool.ruff]
+target-version = "py312"
+line-length = 79
+src = ["src"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "alembic",
+    "venv",
+    ".venv",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # Pyflakes (ошибки синтаксиса и импортов)
+    "I",     # isort (авто-сортировка импортов)
+    "B",     # flake8-bugbear (ловит скрытые баги)
+    "UP",    # pyupgrade (обновляет синтаксис до Python 3.12)
+    "ASYNC", # flake8-async (ловит баги с async/await)
+]
+ignore = [
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["B018"]
+
+# ==============================================================================
+# MYPY (Проверка типов)
+# ==============================================================================
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "."
+files = ["src"]
+plugins = ["sqlalchemy.ext.mypy.plugin"]
+
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+explicit_package_bases = true
+exclude = ["venv", "\\.venv", "alembic"]
+
+# ==============================================================================
+# PYTEST (Тестирование)
+# ==============================================================================
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -1,0 +1,10 @@
+targets:
+  - src
+exclude_dirs:
+  - tests
+  - alembic
+  - venv
+  - .venv
+skips:
+  - B101  # Разрешить assert
+  - B311  # Разрешить стандартный модуль random

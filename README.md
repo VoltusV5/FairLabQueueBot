@@ -1,4 +1,8 @@
 
+./scripts/check.bat tests/test_db_chat.py
+
+
+
 ## 1) Подключиться к БД
 
 Из `.env` возьми `DATABASE_URL` и зайди так:

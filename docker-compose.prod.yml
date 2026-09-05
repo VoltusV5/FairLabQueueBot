@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: fairlabqueuebot-prod-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-fairqueue_db}
+    volumes:
+      - fairlab_postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-fairqueue_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - fairlab-network
+
+  bot:
+    image: ${DOCKER_USERNAME:-fairlab}/fairlabqueuebot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fairlabqueuebot-prod-app
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password}@db:5432/${POSTGRES_DB:-fairqueue_db}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    networks:
+      - fairlab-network
+
+volumes:
+  fairlab_postgres_prod_data:
+
+networks:
+  fairlab-network:
+    driver: bridge
